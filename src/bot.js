@@ -1,3 +1,4 @@
+const express = require('express');
 const { Telegraf, session } = require('telegraf');
 const { BOT_TOKEN } = require('./config');
 const { getDefaultSession } = require('./services/session');
@@ -10,6 +11,24 @@ if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN is not defined in .env file');
   process.exit(1);
 }
+
+// Initialize Express server for Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Health check route
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    bot: 'CVDraft',
+    message: 'Telegram bot is running.'
+  });
+});
+
+// Start Express server
+app.listen(PORT, () => {
+  console.log(`✅ Express server running on port ${PORT}`);
+});
 
 // Initialize bot
 const bot = new Telegraf(BOT_TOKEN);

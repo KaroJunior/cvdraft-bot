@@ -4,6 +4,35 @@ const path = require('path');
 const { generateHTML } = require('../templates/harvard');
 
 /**
+ * Gets the path to the Chrome executable
+ * Works for both local development and production environments
+ */
+function getChromePath() {
+  // Check if we're in a Render-like environment
+  const isProduction = process.env.NODE_ENV === 'production' || 
+                       process.env.RENDER === 'true' ||
+                       process.env.RENDER_EXTERNAL_HOSTNAME !== undefined;
+  
+  if (isProduction) {
+    // On Render, Puppeteer's default cache location should work
+    // But we can also check common paths
+    const possiblePaths = [
+      // Puppeteer's default cache
+      path.join(process.env.HOME || '/root', '.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'),
+      // Render's specific path
+      '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
+      // Generic fallback
+      '/opt/render/.cache/puppeteer/chrome/*/chrome-linux64/chrome'
+    ];
+    // Return null to let Puppeteer auto-detect
+    return null;
+  }
+  
+  // Local development - let Puppeteer handle it
+  return null;
+}
+
+/**
  * Generates a PDF from CV data
  * @param {Object} cvData - The CV data object from session
  * @param {string} outputPath - Path where PDF should be saved
@@ -16,11 +45,33 @@ async function generatePDF(cvData, outputPath) {
     // Generate HTML
     const html = generateHTML(cvData);
     
-    // Launch Puppeteer
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    // Configure launch options for production
+    const launchOptions = {
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process'
+      ]
+    };
+    
+    // In production, let Puppeteer find Chrome automatically
+    // The environment variable will help Puppeteer find the installed Chrome
+    if (process.env.RENDER === 'true') {
+      // Puppeteer will use the default cache location
+      // Set the cache directory explicitly
+      const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
+                       '/opt/render/.cache/puppeteer';
+      if (process.env.PUPPETEER_CACHE_DIR === undefined) {
+        process.env.PUPPETEER_CACHE_DIR = cacheDir;
+      }
+    }
+    
+    // Launch Puppeteer with production-ready options
+    browser = await puppeteer.launch(launchOptions);
     
     const page = await browser.newPage();
     

@@ -1,8 +1,36 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs').promises;
 const path = require('path');
-const fsSync = require('fs'); // For synchronous checks
+const fsSync = require('fs');
 const { generateHTML } = require('../templates/harvard');
+
+/**
+ * Gets the path to the Chrome executable
+ * Works for both local development and production environments
+ */
+function getChromePath() {
+  // Check if we're on Render
+  const isRender = process.env.RENDER === 'true';
+  
+  if (isRender) {
+    // On Render, use the project-local cache path
+    const projectRoot = process.cwd();
+    const localCachePath = path.join(projectRoot, '.cache', 'puppeteer');
+    
+    // Common Chrome paths in the project-local cache
+    const possiblePaths = [
+      // Chrome for Linux (Render uses Linux)
+      path.join(localCachePath, 'chrome', 'linux-*', 'chrome-linux64', 'chrome'),
+      path.join(localCachePath, 'chrome', 'linux-*', 'chrome-linux', 'chrome'),
+    ];
+    
+    // Return null to let Puppeteer auto-detect using its cache directory
+    return null;
+  }
+  
+  // Local development - let Puppeteer handle it
+  return null;
+}
 
 /**
  * Debug function to log environment and path information
@@ -19,95 +47,72 @@ function debugPuppeteerEnvironment() {
   console.log(`  HOME: ${process.env.HOME || '(not set)'}`);
   console.log(`  RENDER: ${process.env.RENDER || '(not set)'}`);
   console.log(`  NODE_ENV: ${process.env.NODE_ENV || '(not set)'}`);
-  console.log(`  RENDER_EXTERNAL_HOSTNAME: ${process.env.RENDER_EXTERNAL_HOSTNAME || '(not set)'}`);
   
   // Working directory
   console.log(`\n📂 Working Directory: ${process.cwd()}`);
+  
+  // Project-local cache path
+  const projectCachePath = path.join(process.cwd(), '.cache', 'puppeteer');
+  console.log(`\n📁 Project cache path: ${projectCachePath}`);
+  console.log(`  Exists: ${fsSync.existsSync(projectCachePath)}`);
+  
+  if (fsSync.existsSync(projectCachePath)) {
+    try {
+      const files = fsSync.readdirSync(projectCachePath);
+      console.log(`  Contents: ${files.join(', ')}`);
+      
+      // Check for chrome folder
+      if (files.includes('chrome')) {
+        const chromePath = path.join(projectCachePath, 'chrome');
+        const chromeFiles = fsSync.readdirSync(chromePath);
+        console.log(`  chrome/ contents: ${chromeFiles.join(', ')}`);
+        
+        // Look for the actual Chrome executable
+        chromeFiles.forEach(folder => {
+          if (folder.startsWith('linux-')) {
+            const fullPath = path.join(chromePath, folder);
+            try {
+              const subFiles = fsSync.readdirSync(fullPath);
+              console.log(`    ${folder}/ contents: ${subFiles.join(', ')}`);
+              
+              // Check for chrome-linux64 or chrome-linux
+              ['chrome-linux64', 'chrome-linux'].forEach(chromeDir => {
+                if (subFiles.includes(chromeDir)) {
+                  const chromeExecutable = path.join(fullPath, chromeDir, 'chrome');
+                  console.log(`    🔧 Executable candidate: ${chromeExecutable}`);
+                  console.log(`      Exists: ${fsSync.existsSync(chromeExecutable)}`);
+                }
+              });
+            } catch (error) {
+              console.log(`    Could not read ${folder}: ${error.message}`);
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.log(`  Could not read cache directory: ${error.message}`);
+    }
+  }
   
   // Puppeteer executable path
   let executablePath = null;
   try {
     executablePath = puppeteer.executablePath();
     console.log(`\n🔧 Puppeteer executablePath(): ${executablePath}`);
-  } catch (error) {
-    console.log(`\n🔧 Puppeteer executablePath() error: ${error.message}`);
-  }
-  
-  // Check if executable exists
-  if (executablePath) {
-    const exists = fsSync.existsSync(executablePath);
-    console.log(`  File exists: ${exists}`);
-    if (exists) {
-      try {
-        const stats = fsSync.statSync(executablePath);
-        console.log(`  File size: ${stats.size} bytes`);
-        console.log(`  File permissions: ${stats.mode.toString(8)}`);
-      } catch (statError) {
-        console.log(`  Could not stat file: ${statError.message}`);
-      }
-    }
-  }
-  
-  // Check common Chrome paths on Render
-  console.log('\n📁 Checking common Chrome paths:');
-  const commonPaths = [
-    '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
-    '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
-    '/opt/render/.cache/puppeteer/chrome/linux-*',
-    '/opt/render/.cache/puppeteer/',
-    '/root/.cache/puppeteer/',
-    '/home/render/.cache/puppeteer/',
-  ];
-  
-  commonPaths.forEach(testPath => {
-    // Check if path exists (only for exact paths, not glob patterns)
-    if (!testPath.includes('*')) {
-      const exists = fsSync.existsSync(testPath);
-      console.log(`  ${testPath}: ${exists ? '✅ EXISTS' : '❌ NOT FOUND'}`);
+    if (executablePath) {
+      const exists = fsSync.existsSync(executablePath);
+      console.log(`  File exists: ${exists}`);
       if (exists) {
         try {
-          const stats = fsSync.statSync(testPath);
-          if (stats.isDirectory()) {
-            console.log(`    (Directory)`);
-            // List contents of directory
-            try {
-              const files = fsSync.readdirSync(testPath);
-              console.log(`    Contents: ${files.join(', ')}`);
-            } catch (readError) {
-              console.log(`    Could not read directory: ${readError.message}`);
-            }
-          } else {
-            console.log(`    (File, ${stats.size} bytes)`);
-          }
+          const stats = fsSync.statSync(executablePath);
+          console.log(`  File size: ${stats.size} bytes`);
         } catch (statError) {
-          console.log(`    Could not stat: ${statError.message}`);
+          console.log(`  Could not stat file: ${statError.message}`);
         }
-      }
-    } else {
-      // For glob patterns, check if parent directory exists and list contents
-      const parentPath = testPath.substring(0, testPath.lastIndexOf('/'));
-      if (parentPath && fsSync.existsSync(parentPath)) {
-        console.log(`  ${parentPath}: exists`);
-        try {
-          const files = fsSync.readdirSync(parentPath);
-          console.log(`    Contents: ${files.join(', ')}`);
-        } catch (readError) {
-          console.log(`    Could not read directory: ${readError.message}`);
-        }
-      } else if (parentPath) {
-        console.log(`  ${parentPath}: ❌ NOT FOUND`);
       }
     }
-  });
-  
-  // Check if Puppeteer can find Chrome via its internal resolution
-  console.log('\n🔍 Testing Puppeteer Chrome resolution:');
-  try {
-    // Try to get the browser path using Puppeteer's internal method
-    const { Browser } = require('puppeteer/lib/cjs/puppeteer/common/Browser');
-    console.log('  Puppeteer Browser module loaded successfully');
   } catch (error) {
-    console.log(`  Could not load Puppeteer internals: ${error.message}`);
+    console.log(`\n🔧 Puppeteer executablePath() error: ${error.message}`);
   }
   
   console.log('========================================\n');
@@ -142,17 +147,12 @@ async function generatePDF(cvData, outputPath) {
       ]
     };
     
-    // In production, let Puppeteer find Chrome automatically
-    // The environment variable will help Puppeteer find the installed Chrome
-    if (process.env.RENDER === 'true') {
-      // Puppeteer will use the default cache location
-      // Set the cache directory explicitly
-      const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
-                       '/opt/render/.cache/puppeteer';
-      if (process.env.PUPPETEER_CACHE_DIR === undefined) {
-        process.env.PUPPETEER_CACHE_DIR = cacheDir;
-        console.log(`⚠️ Set PUPPETEER_CACHE_DIR to: ${cacheDir}`);
-      }
+    // Set cache directory to project-local path if on Render or if PUPPETEER_CACHE_DIR isn't set
+    const isRender = process.env.RENDER === 'true';
+    if (isRender || !process.env.PUPPETEER_CACHE_DIR) {
+      const projectCachePath = path.join(process.cwd(), '.cache', 'puppeteer');
+      process.env.PUPPETEER_CACHE_DIR = projectCachePath;
+      console.log(`⚠️ Set PUPPETEER_CACHE_DIR to: ${projectCachePath}`);
     }
     
     console.log('🚀 Launching Puppeteer with options:', JSON.stringify(launchOptions, null, 2));

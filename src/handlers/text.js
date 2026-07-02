@@ -79,6 +79,7 @@ const {
 
 const { generateSummary } = require('../services/summary');
 const { generateCVPreview } = require('../services/preview');
+const { processRecoveryText } = require('./commands');
 const { Markup } = require('telegraf');
 
 /**
@@ -88,6 +89,11 @@ function handleText(ctx) {
   const session = ctx.session;
   const currentStep = session.flow.currentStep;
   const text = ctx.message.text.trim();
+  
+  // Check if we're in recovery mode
+  if (session.flow.mode === 'recovery' && currentStep === 'RECOVERY_WAITING') {
+    return processRecoveryText(ctx, text);
+  }
   
   if (!currentStep) {
     return ctx.reply('Please use /start to begin the CV creation process.');
@@ -194,6 +200,7 @@ function handleText(ctx) {
       return ctx.reply('I\'m not sure what to do with that. Please follow the prompts.');
   }
 }
+
 
 // Phase 1 handlers
 function handleFullName(ctx, text) {

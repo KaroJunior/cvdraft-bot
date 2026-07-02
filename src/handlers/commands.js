@@ -1,9 +1,10 @@
 const { resetSession, isSessionComplete } = require('../services/session');
 const { BOT_NAME, BOT_USERNAME } = require('../config');
 const { Markup } = require('telegraf');
-const { PERSONAL_FULL_NAME, COMPLETED } = require('../constants/steps');
+const { PERSONAL_FULL_NAME, COMPLETED, PREVIEW } = require('../constants/steps');
 const { generateCVPreview } = require('../services/preview');
 const { createPDF, cleanupFile } = require('../services/pdfGenerator');
+const { parseCVFromPreview, validateRecoveryData } = require('../services/recovery');
 
 /**
  * Handle /start command
@@ -47,11 +48,15 @@ Send /start and click "Create CV" to begin the interview.
 *Editing your CV*
 After your preview appears, you can edit any section using the "Edit CV" button.
 
+*Recover your CV*
+If you lost your CV after seeing the preview, use /recover to rebuild it from the preview text.
+
 *Available commands*
 /start — Begin creating your CV
 /help — Show this help message
 /startover — Reset and start over
 /cancel — Cancel current operation
+/recover — Recover your CV from a preview
 
 *Privacy & Security*
 🔒 Your information is only used to generate your CV. It is not permanently stored and is discarded after your CV is generated.
@@ -115,6 +120,28 @@ function handleCreateCV(ctx) {
 }
 
 /**
+ * Handle /recover command
+ * Reconstructs CV from a pasted preview
+ */
+async function handleRecover(ctx) {
+  const session = ctx.session;
+  
+  // Reset any existing session
+  resetSession(ctx);
+  
+  // Set a flag to indicate we're in recovery mode
+  session.flow.mode = 'recovery';
+  session.flow.currentStep = 'RECOVERY_WAITING';
+  
+  await ctx.replyWithMarkdown(
+    '🔄 *CV Recovery*\n\n' +
+    'Please paste your complete CV Preview exactly as it appeared.\n\n' +
+    'I\'ll regenerate your PDF from it.\n\n' +
+    '*Note:* The preview should include all sections of your CV.'
+  );
+}
+
+/**
  * Generate and send PDF
  */
 async function generateAndSendPDF(ctx) {
@@ -166,6 +193,76 @@ async function generateAndSendPDF(ctx) {
   }
 }
 
+/**
+ * Process recovery text from user
+ */
+async function processRecoveryText(ctx, text) {
+  const session = ctx.session;
+  
+  // Only process if we're in recovery mode
+  if (session.flow.mode !== 'recovery' || session.flow.currentStep !== 'RECOVERY_WAITING') {
+    return false;
+  }
+  
+  try {
+    // Parse the preview text into CV data
+    const cvData = parseCVFromPreview(text);
+    
+    // Validate required sections
+    if (!validateRecoveryData(cvData)) {
+      await ctx.replyWithMarkdown(
+        '⚠️ *Invalid CV preview*\n\n' +
+        'The preview you pasted is missing required sections. Please make sure it includes:\n' +
+        '• Full name\n' +
+        '• Professional title\n' +
+        '• Professional summary\n' +
+        '• At least one education entry\n\n' +
+        'Please paste the complete preview again or use /start to create a new CV.'
+      );
+      return true;
+    }
+    
+    // Store recovered CV data in session
+    session.cv = cvData;
+    session.flow.mode = 'normal';
+    session.flow.currentStep = PREVIEW;
+    
+    // Generate preview to show user
+    const preview = generateCVPreview(session);
+    
+    await ctx.replyWithMarkdown(
+      '✅ *CV recovered successfully!*\n\n' +
+      'Here\'s what was recovered:\n\n' +
+      '```\n' +
+      preview +
+      '\n```'
+    );
+    
+    // Show PDF generation options
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('📄 Generate PDF', 'looks_good')],
+      [Markup.button.callback('🔄 Start Over', 'create_cv')]
+    ]);
+    
+    await ctx.replyWithMarkdown(
+      'What would you like to do next?',
+      keyboard
+    );
+    
+    return true;
+    
+  } catch (error) {
+    console.error('Recovery parsing error:', error);
+    await ctx.replyWithMarkdown(
+      '⚠️ *Could not parse your CV preview.*\n\n' +
+      `Error: ${error.message}\n\n` +
+      'Please make sure you\'re pasting the complete preview text exactly as it appeared.\n\n' +
+      'Use /start to create a new CV.'
+    );
+    return true;
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -173,4 +270,6 @@ module.exports = {
   handleCancel,
   handleCreateCV,
   generateAndSendPDF,
+  handleRecover,
+  processRecoveryText,
 };

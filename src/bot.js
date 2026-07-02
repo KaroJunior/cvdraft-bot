@@ -2,7 +2,7 @@ const express = require('express');
 const { Telegraf, session } = require('telegraf');
 const { BOT_TOKEN } = require('./config');
 const { getDefaultSession } = require('./services/session');
-const { handleStart, handleStartOver, handleCancel, handleHelp } = require('./handlers/commands');
+const { handleStart, handleStartOver, handleCancel, handleHelp, handleRecover } = require('./handlers/commands');
 const { handleText } = require('./handlers/text');
 const { handleAction } = require('./handlers/actions');
 
@@ -64,6 +64,7 @@ bot.command('start', handleStart);
 bot.command('help', handleHelp);
 bot.command('startover', handleStartOver);
 bot.command('cancel', handleCancel);
+bot.command('recover', handleRecover);
 
 // Handle callback queries (button clicks)
 bot.action(/.*/, handleAction);
@@ -77,7 +78,7 @@ bot.launch()
     console.log(`✅ ${require('./config').BOT_NAME} bot is running!`);
     console.log(`📍 Bot username: ${require('./config').BOT_USERNAME}`);
     console.log('📝 Press Ctrl+C to stop');
-    console.log('📋 Available commands: /start, /help, /startover, /cancel');
+    console.log('📋 Available commands: /start, /help, /startover, /cancel, /recover');
   })
   .catch((error) => {
     console.error('❌ Failed to launch bot:', error);

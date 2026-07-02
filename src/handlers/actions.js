@@ -47,6 +47,22 @@ const {
 const { generateAndSendPDF } = require('./commands');
 
 /**
+ * Safely answer a callback query with error handling
+ */
+async function safeAnswerCbQuery(ctx, text, showAlert = false) {
+  try {
+    await ctx.answerCbQuery(text, { showAlert });
+  } catch (error) {
+    if (error.message && error.message.includes('query is too old')) {
+      console.warn('⚠️ Callback query expired:', error.message);
+    } else {
+      console.warn('⚠️ Failed to answer callback query:', error.message);
+    }
+    // Continue execution - the bot shouldn't crash for this
+  }
+}
+
+/**
  * Handle callback queries (button clicks)
  */
 async function handleAction(ctx) {
@@ -144,15 +160,18 @@ async function handleAction(ctx) {
       return handleLooksGood(ctx);
     
     default:
-      return ctx.answerCbQuery('Unknown action');
+      return safeAnswerCbQuery(ctx, 'Unknown action');
   }
 }
+
+// All existing handlers remain unchanged except for adding safeAnswerCbQuery
+// Here are examples of the updated handlers with safe answers:
 
 // Phase 1 handlers
 function handleCreateCV(ctx) {
   resetSession(ctx);
   ctx.session.flow.currentStep = require('../constants/steps').PERSONAL_FULL_NAME;
-  ctx.answerCbQuery('Starting CV creation...');
+  safeAnswerCbQuery(ctx, 'Starting CV creation...');
   ctx.replyWithMarkdown(
     '*Let\'s create your CV!* 📝\n\n' +
     'First, I need some personal details.\n\n' +
@@ -161,7 +180,7 @@ function handleCreateCV(ctx) {
 }
 
 function handleSummaryManual(ctx) {
-  ctx.answerCbQuery('You chose to write it yourself');
+  safeAnswerCbQuery(ctx, 'You chose to write it yourself');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_SUMMARY) {
     ctx.session.flow.currentStep = EDIT_SUMMARY;
@@ -180,7 +199,7 @@ function handleSummaryManual(ctx) {
 }
 
 function handleSummaryAuto(ctx) {
-  ctx.answerCbQuery('I\'ll help you build a summary');
+  safeAnswerCbQuery(ctx, 'I\'ll help you build a summary');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_SUMMARY) {
     ctx.session.flow.currentStep = EDIT_SUMMARY;
@@ -204,12 +223,12 @@ function handleSummaryAuto(ctx) {
 
 // Phase 2 - Education action handlers
 function handleEducationStart(ctx) {
-  ctx.answerCbQuery('Starting education section...');
+  safeAnswerCbQuery(ctx, 'Starting education section...');
   startEducationSection(ctx);
 }
 
 function handleEducationAdd(ctx) {
-  ctx.answerCbQuery('Adding another education entry...');
+  safeAnswerCbQuery(ctx, 'Adding another education entry...');
   ctx.session.flow.tempEntry = {
     school: null,
     degree: null,
@@ -225,7 +244,7 @@ function handleEducationAdd(ctx) {
 }
 
 async function handleEducationContinue(ctx) {
-  ctx.answerCbQuery('Continuing to experience...');
+  safeAnswerCbQuery(ctx, 'Continuing to experience...');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_EDUCATION || 
       ctx.session.flow.currentStep === EDUCATION_COMPLETE && 
@@ -240,18 +259,18 @@ async function handleEducationContinue(ctx) {
 
 // Phase 2 - Experience action handlers
 function handleExperienceStart(ctx) {
-  ctx.answerCbQuery('Starting experience section...');
+  safeAnswerCbQuery(ctx, 'Starting experience section...');
   startExperienceSection(ctx);
 }
 
 function handleBulletAdd(ctx) {
-  ctx.answerCbQuery('Adding another bullet...');
+  safeAnswerCbQuery(ctx, 'Adding another bullet...');
   ctx.session.flow.currentStep = require('../constants/steps').EXPERIENCE_BULLET;
   ctx.reply('👉 *Enter another responsibility or achievement:*');
 }
 
 async function handleBulletFinish(ctx) {
-  ctx.answerCbQuery('Finishing experience entry...');
+  safeAnswerCbQuery(ctx, 'Finishing experience entry...');
   const tempEntry = ctx.session.flow.tempEntry;
   
   if (!tempEntry.bullets || tempEntry.bullets.length === 0) {
@@ -277,7 +296,7 @@ async function handleBulletFinish(ctx) {
 }
 
 function handleExperienceAdd(ctx) {
-  ctx.answerCbQuery('Adding another experience entry...');
+  safeAnswerCbQuery(ctx, 'Adding another experience entry...');
   ctx.session.flow.tempEntry = {
     title: null,
     company: null,
@@ -292,7 +311,7 @@ function handleExperienceAdd(ctx) {
 }
 
 async function handleExperienceContinue(ctx) {
-  ctx.answerCbQuery('Continuing to skills...');
+  safeAnswerCbQuery(ctx, 'Continuing to skills...');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_EXPERIENCE || 
       ctx.session.flow.currentStep === EXPERIENCE_COMPLETE && 
@@ -307,7 +326,7 @@ async function handleExperienceContinue(ctx) {
 
 // Phase 3 - Projects action handlers
 function handleProjectsYes(ctx) {
-  ctx.answerCbQuery('Adding projects...');
+  safeAnswerCbQuery(ctx, 'Adding projects...');
   ctx.session.flow.tempEntry = {
     name: null,
     role: null,
@@ -319,13 +338,13 @@ function handleProjectsYes(ctx) {
 }
 
 function handleProjectsSkip(ctx) {
-  ctx.answerCbQuery('Skipping projects...');
+  safeAnswerCbQuery(ctx, 'Skipping projects...');
   ctx.session.flow.currentStep = ACTIVITIES_INTRO;
   startActivitiesSection(ctx);
 }
 
 function handleProjectsAdd(ctx) {
-  ctx.answerCbQuery('Adding another project...');
+  safeAnswerCbQuery(ctx, 'Adding another project...');
   ctx.session.flow.tempEntry = {
     name: null,
     role: null,
@@ -337,7 +356,7 @@ function handleProjectsAdd(ctx) {
 }
 
 async function handleProjectsContinue(ctx) {
-  ctx.answerCbQuery('Continuing to activities...');
+  safeAnswerCbQuery(ctx, 'Continuing to activities...');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_PROJECTS || 
       ctx.session.flow.currentStep === PROJECTS_COMPLETE && 
@@ -353,7 +372,7 @@ async function handleProjectsContinue(ctx) {
 
 // Phase 3 - Activities action handlers
 function handleActivitiesYes(ctx) {
-  ctx.answerCbQuery('Adding activities...');
+  safeAnswerCbQuery(ctx, 'Adding activities...');
   ctx.session.flow.tempEntry = {
     title: null,
     organization: null,
@@ -364,13 +383,13 @@ function handleActivitiesYes(ctx) {
 }
 
 function handleActivitiesSkip(ctx) {
-  ctx.answerCbQuery('Skipping activities...');
+  safeAnswerCbQuery(ctx, 'Skipping activities...');
   ctx.session.flow.currentStep = CERTIFICATIONS_INTRO;
   startCertificationsSection(ctx);
 }
 
 function handleActivitiesAdd(ctx) {
-  ctx.answerCbQuery('Adding another activity...');
+  safeAnswerCbQuery(ctx, 'Adding another activity...');
   ctx.session.flow.tempEntry = {
     title: null,
     organization: null,
@@ -381,7 +400,7 @@ function handleActivitiesAdd(ctx) {
 }
 
 async function handleActivitiesContinue(ctx) {
-  ctx.answerCbQuery('Continuing to certifications...');
+  safeAnswerCbQuery(ctx, 'Continuing to certifications...');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_ACTIVITIES || 
       ctx.session.flow.currentStep === ACTIVITIES_COMPLETE && 
@@ -397,7 +416,7 @@ async function handleActivitiesContinue(ctx) {
 
 // Phase 3 - Certifications action handlers
 function handleCertificationsYes(ctx) {
-  ctx.answerCbQuery('Adding certifications...');
+  safeAnswerCbQuery(ctx, 'Adding certifications...');
   ctx.session.flow.tempEntry = {
     name: null,
     issuer: null,
@@ -408,13 +427,13 @@ function handleCertificationsYes(ctx) {
 }
 
 function handleCertificationsSkip(ctx) {
-  ctx.answerCbQuery('Skipping certifications...');
+  safeAnswerCbQuery(ctx, 'Skipping certifications...');
   ctx.session.flow.currentStep = REFERENCES_INTRO;
   startReferencesSection(ctx);
 }
 
 function handleCertificationsAdd(ctx) {
-  ctx.answerCbQuery('Adding another certification...');
+  safeAnswerCbQuery(ctx, 'Adding another certification...');
   ctx.session.flow.tempEntry = {
     name: null,
     issuer: null,
@@ -425,7 +444,7 @@ function handleCertificationsAdd(ctx) {
 }
 
 async function handleCertificationsContinue(ctx) {
-  ctx.answerCbQuery('Continuing to references...');
+  safeAnswerCbQuery(ctx, 'Continuing to references...');
   // Check if we're in edit mode
   if (ctx.session.flow.currentStep === EDIT_CERTIFICATIONS || 
       ctx.session.flow.currentStep === CERTIFICATIONS_COMPLETE && 
@@ -441,7 +460,7 @@ async function handleCertificationsContinue(ctx) {
 
 // Phase 3 - References action handlers
 async function handleReferencesYes(ctx) {
-  ctx.answerCbQuery('References will be included');
+  safeAnswerCbQuery(ctx, 'References will be included');
   ctx.session.cv.referencesOnRequest = true;
   ctx.session.flow.currentStep = PREVIEW;
   
@@ -456,7 +475,7 @@ async function handleReferencesYes(ctx) {
 }
 
 async function handleReferencesNo(ctx) {
-  ctx.answerCbQuery('References will not be included');
+  safeAnswerCbQuery(ctx, 'References will not be included');
   ctx.session.cv.referencesOnRequest = false;
   ctx.session.flow.currentStep = PREVIEW;
   
@@ -472,7 +491,7 @@ async function handleReferencesNo(ctx) {
 
 // Phase 4 - Edit flow handlers
 function handleEditPersonal(ctx) {
-  ctx.answerCbQuery('Editing personal details...');
+  safeAnswerCbQuery(ctx, 'Editing personal details...');
   ctx.session.flow.currentStep = EDIT_PERSONAL;
   ctx.session.flow.tempEntry = { step: 'name' };
   ctx.replyWithMarkdown(
@@ -483,7 +502,7 @@ function handleEditPersonal(ctx) {
 }
 
 function handleEditSummary(ctx) {
-  ctx.answerCbQuery('Editing summary...');
+  safeAnswerCbQuery(ctx, 'Editing summary...');
   ctx.session.flow.currentStep = EDIT_SUMMARY;
   ctx.session.flow.tempEntry = { mode: 'select' };
   
@@ -500,7 +519,7 @@ function handleEditSummary(ctx) {
 }
 
 function handleEditEducation(ctx) {
-  ctx.answerCbQuery('Editing education...');
+  safeAnswerCbQuery(ctx, 'Editing education...');
   // Clear existing education
   ctx.session.cv.education = [];
   ctx.session.flow.currentStep = EDIT_EDUCATION;
@@ -510,7 +529,7 @@ function handleEditEducation(ctx) {
 }
 
 function handleEditExperience(ctx) {
-  ctx.answerCbQuery('Editing experience...');
+  safeAnswerCbQuery(ctx, 'Editing experience...');
   // Clear existing experience
   ctx.session.cv.experience = [];
   ctx.session.flow.currentStep = EDIT_EXPERIENCE;
@@ -520,7 +539,7 @@ function handleEditExperience(ctx) {
 }
 
 function handleEditSkills(ctx) {
-  ctx.answerCbQuery('Editing skills...');
+  safeAnswerCbQuery(ctx, 'Editing skills...');
   // Clear existing skills
   ctx.session.cv.skills = {
     technical: [],
@@ -534,7 +553,7 @@ function handleEditSkills(ctx) {
 }
 
 function handleEditProjects(ctx) {
-  ctx.answerCbQuery('Editing projects...');
+  safeAnswerCbQuery(ctx, 'Editing projects...');
   // Clear existing projects
   ctx.session.cv.projects = [];
   ctx.session.flow.currentStep = EDIT_PROJECTS;
@@ -544,7 +563,7 @@ function handleEditProjects(ctx) {
 }
 
 function handleEditActivities(ctx) {
-  ctx.answerCbQuery('Editing activities...');
+  safeAnswerCbQuery(ctx, 'Editing activities...');
   // Clear existing activities
   ctx.session.cv.activities = [];
   ctx.session.flow.currentStep = EDIT_ACTIVITIES;
@@ -554,7 +573,7 @@ function handleEditActivities(ctx) {
 }
 
 function handleEditCertifications(ctx) {
-  ctx.answerCbQuery('Editing certifications...');
+  safeAnswerCbQuery(ctx, 'Editing certifications...');
   // Clear existing certifications
   ctx.session.cv.certifications = [];
   ctx.session.flow.currentStep = EDIT_CERTIFICATIONS;
@@ -564,7 +583,7 @@ function handleEditCertifications(ctx) {
 }
 
 function handleEditReferences(ctx) {
-  ctx.answerCbQuery('Editing references...');
+  safeAnswerCbQuery(ctx, 'Editing references...');
   ctx.session.flow.currentStep = EDIT_REFERENCES;
   
   const keyboard = Markup.inlineKeyboard([
@@ -580,7 +599,7 @@ function handleEditReferences(ctx) {
 }
 
 async function handleFinishEditing(ctx) {
-  ctx.answerCbQuery('Generating updated preview...');
+  safeAnswerCbQuery(ctx, 'Generating updated preview...');
   ctx.session.flow.currentStep = PREVIEW;
   
   const preview = require('../services/preview').generateCVPreview(ctx.session);
@@ -605,12 +624,12 @@ async function handleFinishEditing(ctx) {
 }
 
 async function handleEditAgain(ctx) {
-  ctx.answerCbQuery('Returning to edit menu...');
+  safeAnswerCbQuery(ctx, 'Returning to edit menu...');
   await showEditMenu(ctx);
 }
 
 async function handleLooksGood(ctx) {
-  ctx.answerCbQuery('Generating your PDF...');
+  safeAnswerCbQuery(ctx, 'Generating your PDF...');
   // Generate and send PDF
   await generateAndSendPDF(ctx);
 }

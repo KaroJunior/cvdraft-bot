@@ -63,6 +63,7 @@ Users interact entirely through Telegram messages and buttons. The bot asks ques
 14. **Edit** - Edit any section by re-entering it
 15. **Looks Good** - Generate PDF
 16. **PDF Delivery** - User receives the PDF file
+17. **Recovery** - If the bot crashes after preview, use `/recover` to rebuild the CV from the preview text
 
 ---
 
@@ -73,6 +74,12 @@ Users interact entirely through Telegram messages and buttons. The bot asks ques
 The bot conducts a structured interview, asking one question at a time. Each answer is validated and stored in the session. The flow is linear but allows going back via the edit system.
 
 **How it works**: The bot uses a `currentStep` variable in the session to track where the user is. When a user sends a message, the `handleText()` function checks `currentStep` and routes to the appropriate handler. Each handler updates the session, advances `currentStep`, and asks the next question.
+
+### CV Recovery System
+
+If the bot crashes after the user has already received the full CV preview, the user can use `/recover` to regenerate the PDF without recreating the CV.
+
+**How it works**: The user pastes their saved CV preview text. A parser function (`parseCVFromPreview()`) reverses the preview generation process to reconstruct the CV data object. Required sections (name, title, summary, education) are validated, and the recovered data is used to generate a new PDF.
 
 ### Harvard-Style PDF Generation
 
@@ -127,6 +134,12 @@ All user data is stored in memory (not a database). Each user gets a unique sess
 
 No data is permanently stored. All user information exists only in memory during the session and is deleted when the session ends or the bot restarts. No analytics, tracking, or third-party sharing.
 
+### Callback Query Error Handling
+
+The bot handles expired callback queries gracefully. If a user clicks a button after it has expired (common with long-running conversations), the bot catches the error, logs a warning, and continues execution without crashing.
+
+**How it works**: All `ctx.answerCbQuery()` calls are wrapped in `safeAnswerCbQuery()`, which catches "query is too old" errors and continues execution.
+
 ### Commands
 
 | Command | Purpose |
@@ -135,6 +148,7 @@ No data is permanently stored. All user information exists only in memory during
 | `/help` | Show help information |
 | `/startover` | Reset everything and start over |
 | `/cancel` | Cancel current operation |
+| `/recover` | Recover a CV from a saved preview |
 
 ### Error Handling
 
@@ -148,14 +162,15 @@ All user-facing errors show friendly messages. Internal errors are logged to the
 
 ```
 cvdraft-bot/
+├── .cache/                  # Puppeteer Chrome cache (auto-generated)
 ├── src/
-│   ├── bot.js              # Entry point - bootstraps everything
+│   ├── bot.js              # Entry point - bootstraps Express and Telegraf
 │   ├── config/
 │   │   └── index.js        # Environment variables and config
 │   ├── constants/
 │   │   └── steps.js        # All step constants (conversation states)
 │   ├── handlers/
-│   │   ├── commands.js     # /start, /help, /startover, /cancel
+│   │   ├── commands.js     # /start, /help, /startover, /cancel, /recover
 │   │   ├── text.js         # Text message handlers (all interview questions)
 │   │   └── actions.js      # Callback query handlers (button clicks)
 │   ├── services/
@@ -163,12 +178,14 @@ cvdraft-bot/
 │   │   ├── summary.js      # Non-AI summary generation
 │   │   ├── preview.js      # Plain-text preview generation
 │   │   ├── pdfGenerator.js # PDF generation with Puppeteer
+│   │   ├── recovery.js     # CV recovery parser
 │   │   └── tempCleanup.js  # Optional temp file cleanup
 │   ├── templates/
 │   │   └── harvard.js      # Harvard-style HTML template
 │   └── utils/
 │       └── validation.js   # Input validation functions
 ├── temp/                    # Temporary PDF files (auto-cleaned)
+├── puppeteer.config.cjs    # Puppeteer cache configuration
 ├── .env                     # Environment variables (BOT_TOKEN)
 ├── package.json             # Dependencies and scripts
 └── package-lock.json        # Locked dependency versions
@@ -179,6 +196,7 @@ cvdraft-bot/
 | Folder | Purpose |
 |--------|---------|
 | `src/` | All source code |
+| `.cache/` | Puppeteer Chrome browser cache (project-local for Render compatibility) |
 | `config/` | Centralized configuration - easy to update bot name, token, etc. |
 | `constants/` | All conversation step names in one place - prevents typos |
 | `handlers/` | Separates different types of user interaction (commands, text, buttons) |
@@ -192,18 +210,19 @@ cvdraft-bot/
 
 ### src/bot.js
 
-**Why it exists**: Entry point of the application. Bootstraps the bot, sets up middleware, registers commands, and starts listening.
+**Why it exists**: Entry point of the application. Bootstraps both the Express server (for Render health checks) and the Telegram bot.
 
 **What it's responsible for**:
 - Validating BOT_TOKEN exists
+- Creating Express server with health check route (`GET /`)
 - Creating Telegraf instance
 - Setting up session middleware
-- Registering all commands
+- Registering all commands (`/start`, `/help`, `/startover`, `/cancel`, `/recover`)
 - Registering action and text handlers
 - Launching the bot
 - Graceful shutdown on SIGINT/SIGTERM
 
-**Dependencies**: All handlers and services
+**Dependencies**: All handlers and services, Express
 
 **What happens if modified**: Any change to the core bot setup, command list, or middleware stack
 
@@ -239,16 +258,18 @@ cvdraft-bot/
 
 ### src/handlers/commands.js
 
-**Why it exists**: Handles all slash commands (/start, /help, /startover, /cancel).
+**Why it exists**: Handles all slash commands.
 
 **What it's responsible for**:
-- /start: Welcome message, reset session, show "Create CV" button
-- /help: Show help information
-- /startover: Reset everything, start over
-- /cancel: Cancel current operation, clear session
+- `/start`: Welcome message, reset session, show "Create CV" button
+- `/help`: Show help information
+- `/startover`: Reset everything, start over
+- `/cancel`: Cancel current operation, clear session
+- `/recover`: Enter recovery mode, wait for user to paste preview
+- `processRecoveryText()`: Parse pasted preview and reconstruct CV
 - `generateAndSendPDF()`: The actual PDF generation and delivery function
 
-**Dependencies**: session.js, preview.js, pdfGenerator.js
+**Dependencies**: session.js, preview.js, pdfGenerator.js, recovery.js
 
 **What happens if modified**: Changes command behavior
 
@@ -256,16 +277,17 @@ cvdraft-bot/
 
 ### src/handlers/text.js
 
-**Why it exists**: Handles all text messages (user answers to interview questions).
+**Why it exists**: Handles all text messages (user answers to interview questions and recovery previews).
 
 **What it's responsible for**:
+- **Recovery mode detection**: Checks for recovery mode at the very top of `handleText()`
 - Routing messages based on `currentStep`
 - All interview question handlers (personal details, summary, education, etc.)
 - Starting each section (education, experience, skills, etc.)
 - Showing preview and edit menu
 - Edit flow for personal details and summary
 
-**Dependencies**: validation.js, summary.js, preview.js, steps.js
+**Dependencies**: validation.js, summary.js, preview.js, steps.js, recovery.js
 
 **What happens if modified**: Changes interview flow, questions, or validation
 
@@ -277,8 +299,9 @@ cvdraft-bot/
 
 **What it's responsible for**:
 - All button callbacks: "Create CV", summary mode, adding entries, editing, finishing, etc.
-- Edit flow callbacks (edit_personal, edit_education, etc.)
+- Edit flow callbacks (`edit_personal`, `edit_education`, etc.)
 - "Looks Good" triggers PDF generation
+- `safeAnswerCbQuery()`: Wraps all callback answers with error handling for expired queries
 
 **Dependencies**: text.js, commands.js
 
@@ -338,10 +361,25 @@ cvdraft-bot/
 - `generatePDF()`: Launches Puppeteer, renders HTML, creates PDF
 - `createPDF()`: Creates temp file and calls generatePDF
 - `cleanupFile()`: Safely deletes temporary files
+- Puppeteer configuration for both local and Render environments
 
 **Dependencies**: puppeteer, harvard.js
 
 **What happens if modified**: Changes PDF generation settings (margins, format, etc.)
+
+---
+
+### src/services/recovery.js
+
+**Why it exists**: Parses a saved CV preview back into a CV data object.
+
+**What it's responsible for**:
+- `parseCVFromPreview()`: Reverse-engineers the preview format to reconstruct CV data
+- `validateRecoveryData()`: Validates that required sections exist
+
+**Dependencies**: preview.js (for format reference)
+
+**What happens if modified**: Changes recovery parsing logic
 
 ---
 
@@ -379,18 +417,32 @@ cvdraft-bot/
 **Why it exists**: Provides reusable validation functions.
 
 **What it's responsible for**:
-- isNotEmpty(): Required field validation
-- isValidEmail(): Email regex validation
-- isValidPhone(): Phone number validation
-- isSkip(): Detects "skip" for optional fields
-- isValidLinkedIn(): Basic LinkedIn URL check
-- isValidUrl(): URL format check
-- parseCommaSeparated(): Converts comma-separated strings to arrays
-- isValidYear(): 4-digit year validation
+- `isNotEmpty()`: Required field validation
+- `isValidEmail()`: Email regex validation
+- `isValidPhone()`: Phone number validation
+- `isSkip()`: Detects "skip" for optional fields
+- `isValidLinkedIn()`: Basic LinkedIn URL check
+- `isValidUrl()`: URL format check
+- `parseCommaSeparated()`: Converts comma-separated strings to arrays
+- `isValidYear()`: 4-digit year validation
 
 **Dependencies**: None
 
 **What happens if modified**: Changes validation rules
+
+---
+
+### puppeteer.config.cjs
+
+**Why it exists**: Configures Puppeteer's Chrome download location.
+
+**What it's responsible for**:
+- Setting cache directory to project-local `.cache/puppeteer/`
+- Configuring log level for debugging
+
+**Dependencies**: path
+
+**What happens if modified**: Changes where Chrome is downloaded
 
 ---
 
@@ -406,6 +458,36 @@ handleStart() in commands.js
 resetSession() - wipes any existing session
     ↓
 Show welcome message with "Create CV" button
+```
+
+### /recover Command Flow
+
+```
+User sends /recover
+    ↓
+handleRecover() in commands.js
+    ↓
+resetSession() - wipes any existing session
+    ↓
+Set flow.mode = 'recovery' and flow.currentStep = 'RECOVERY_WAITING'
+    ↓
+Ask user to paste their saved CV preview
+    ↓
+User pastes preview text
+    ↓
+handleText() detects recovery mode FIRST (before any other validation)
+    ↓
+Call processRecoveryText() in commands.js
+    ↓
+parseCVFromPreview() in recovery.js - reconstructs CV data
+    ↓
+validateRecoveryData() - checks required sections
+    ↓
+Store recovered data in session
+    ↓
+Generate preview to show user
+    ↓
+Show "Generate PDF" / "Start Over" buttons
 ```
 
 ### Creating a CV - Full Interview Flow
@@ -748,7 +830,7 @@ Show final completion message
 | Property | Purpose |
 |----------|---------|
 | `currentStep` | Current conversation state (determines which handler runs) |
-| `mode` | "interview" or "editing" - determines behavior |
+| `mode` | "interview", "editing", or "recovery" - determines behavior |
 | `editingSection` | Which section is being edited (used for cleanup) |
 | `tempEntry` | Temporary object for in-progress entries (education, experience, etc.) |
 | `awaitingSectionAction` | Boolean flag for button-based flows |
@@ -774,6 +856,7 @@ Show final completion message
 
 - **During interview**: Data is stored in `session.cv` as soon as each field is validated
 - **During editing**: Data is cleared for the section being edited, then re-collected
+- **During recovery**: Data is reconstructed from the preview and stored in `session.cv`
 - **Temporary entries**: Education, experience, projects, activities, and certifications use `tempEntry` to build the entry before pushing to the final array
 
 ### When Data Is Deleted
@@ -806,6 +889,26 @@ function handleText(ctx) {
 }
 ```
 
+### Recovery Mode Check
+
+Recovery mode is checked **before** any other validation in `handleText()`:
+
+```javascript
+function handleText(ctx) {
+  // CHECK RECOVERY FIRST - before any other validation
+  if (session.flow.mode === 'recovery' && session.flow.currentStep === 'RECOVERY_WAITING') {
+    return processRecoveryText(ctx, text);
+  }
+  
+  // Now check for valid current step
+  const currentStep = session.flow.currentStep;
+  if (!currentStep) {
+    return ctx.reply('Please use /start to begin the CV creation process.');
+  }
+  // ... rest of flow
+}
+```
+
 ### Step Transitions
 
 Each handler:
@@ -832,6 +935,25 @@ async function handleAction(ctx) {
 }
 ```
 
+### Callback Query Error Handling
+
+All callback queries are wrapped with `safeAnswerCbQuery()` to prevent crashes from expired queries:
+
+```javascript
+async function safeAnswerCbQuery(ctx, text, showAlert = false) {
+  try {
+    await ctx.answerCbQuery(text, { showAlert });
+  } catch (error) {
+    if (error.message && error.message.includes('query is too old')) {
+      console.warn('⚠️ Callback query expired:', error.message);
+    } else {
+      console.warn('⚠️ Failed to answer callback query:', error.message);
+    }
+    // Continue execution - the bot shouldn't crash for this
+  }
+}
+```
+
 ### Text vs Button Handlers
 
 - **Text handlers**: For free-text input (names, descriptions, emails, etc.)
@@ -846,6 +968,8 @@ async function handleAction(ctx) {
 **Branching Flow**: Summary mode branches into manual or helper, then rejoins the main flow.
 
 **Edit Flow**: Clears data, re-runs section flow, then returns to edit menu.
+
+**Recovery Flow**: Special mode that bypasses normal flow and reconstructs CV from preview text.
 
 ---
 
@@ -962,6 +1086,34 @@ Each validation failure shows a specific error message:
 | `services/pdfGenerator.js` | Puppeteer orchestration, temp file management |
 | `handlers/commands.js` | Orchestrates the whole flow |
 | `temp/` | Temporary file storage |
+
+### Puppeteer Configuration
+
+The bot uses a project-local cache for Chrome to ensure compatibility with Render:
+
+```javascript
+// puppeteer.config.cjs
+module.exports = {
+  cacheDirectory: join(__dirname, '.cache', 'puppeteer'),
+  logLevel: 'info',
+  skipDownload: false,
+};
+```
+
+**Launch options**:
+```javascript
+const launchOptions = {
+  headless: 'new',
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-zygote',
+    '--single-process'
+  ]
+};
+```
 
 ### PDF Options
 
@@ -1143,6 +1295,19 @@ const escape = (str) => {
 
 **When to use**: When the user wants to abandon the current session
 
+### /recover
+
+**Purpose**: Recover a CV from a saved preview
+
+**Behavior**:
+- Resets the session
+- Sets `flow.mode = 'recovery'` and `flow.currentStep = 'RECOVERY_WAITING'`
+- Asks the user to paste their saved CV preview
+- Parses the preview and reconstructs the CV data
+- Shows recovered preview and "Generate PDF" / "Start Over" buttons
+
+**When to use**: When the bot crashed after showing the preview and the user still has the preview text
+
 ---
 
 ## 12. How to Change the Bot
@@ -1281,6 +1446,7 @@ start - Start creating a professional CV
 help - Learn how to use CVDraft
 startover - Start your CV again
 cancel - Cancel the current operation
+recover - Recover your CV from a preview
 ```
 
 ### Deploy to Render
@@ -1291,7 +1457,7 @@ cancel - Cancel the current operation
 4. Configure:
    - Name: `cvdraft-bot`
    - Environment: `Node`
-   - Build Command: `npm install`
+   - Build Command: `npm install && npx puppeteer browsers install chrome`
    - Start Command: `npm start`
 5. Add environment variable:
    - Key: `BOT_TOKEN`
@@ -1337,6 +1503,7 @@ cancel - Cancel the current operation
 | Puppeteer fails | Use `--no-sandbox` flag (already in code) |
 | Port conflicts | Render handles this automatically |
 | Memory issues | Upgrade plan or optimize code |
+| Chrome not found | Verify build command includes `npx puppeteer browsers install chrome` |
 
 ---
 
@@ -1362,8 +1529,10 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 2. Test all validation rules
 3. Test adding multiple entries (education, experience, etc.)
 4. Test editing each section
-5. Test /startover, /cancel, /help
+5. Test `/startover`, `/cancel`, `/help`, `/recover`
 6. Test PDF generation with various data sizes
+7. Test recovery with a saved preview
+8. Test callback query timeout handling
 
 **Before Deployment**:
 1. Run `npm install` to ensure dependencies are fresh
@@ -1386,6 +1555,8 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 2. **Validation issues**: Check `src/utils/validation.js`
 3. **PDF issues**: Check `src/templates/harvard.js` and Puppeteer logs
 4. **Session issues**: Check `src/services/session.js`
+5. **Recovery issues**: Check `src/services/recovery.js` and logs in `processRecoveryText()`
+6. **Callback issues**: Check `safeAnswerCbQuery()` in `src/handlers/actions.js`
 
 ### Safe Changes
 
@@ -1400,6 +1571,7 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 - Changing step constants
 - Changing the PDF generation flow
 - Changing the core handlers
+- Changing the recovery parser
 
 ---
 
@@ -1434,6 +1606,13 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 2. Use `--no-sandbox` flag (already in code)
 3. Increase memory limits
 
+**Error**: "Could not find Chrome"
+
+**Solution**: 
+1. Verify build command includes `npx puppeteer browsers install chrome`
+2. Check that `puppeteer.config.cjs` exists with correct cache directory
+3. Check logs for Chrome installation path
+
 ### Render Sleeping
 
 **Issue**: Bot goes to sleep on free tier
@@ -1451,6 +1630,7 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 1. Is temp directory writable?
 2. Is Puppeteer installed correctly?
 3. Is there enough memory?
+4. Is Chrome installed correctly on Render?
 
 **Solution**: Check logs for specific error, verify temp directory permissions
 
@@ -1459,6 +1639,17 @@ npm install telegraf@latest puppeteer@latest dotenv@latest
 **Check**: `.env` file exists with `BOT_TOKEN`
 
 **Solution**: Create `.env` or add to hosting environment variables
+
+### Recovery Not Working
+
+**Error**: Recovery parser fails
+
+**Check**:
+1. Verify the preview text is exactly as generated by the bot
+2. Check logs for parser errors
+3. Verify required sections exist (name, title, summary, education)
+
+**Solution**: The parser is designed to be the exact inverse of `generateCVPreview()`. If preview format changes, update `parseCVFromPreview()` accordingly.
 
 ---
 
@@ -1567,6 +1758,18 @@ The bot uses session-based state to remember where you are in the flow. Each use
 
 Yes! The code is open source. You can customize it with your branding.
 
+### What does the `/recover` command do?
+
+If the bot crashes after showing you the preview, you can use `/recover` to rebuild your CV from the saved preview text. Just paste the preview and the bot will reconstruct your data and generate a new PDF.
+
+### Why does the bot need Express?
+
+Express is used for Render deployment. Render requires a web service to have an open port for health checks. The Express server runs on `process.env.PORT` and provides a simple health check endpoint (`GET /`).
+
+### Where does Puppeteer store Chrome?
+
+Puppeteer stores Chrome in `.cache/puppeteer/` (project-local). This ensures Chrome is available on Render where the system cache directory may not persist.
+
 ---
 
 ## 18. Codebase Best Practices
@@ -1579,6 +1782,7 @@ Yes! The code is open source. You can customize it with your branding.
 | `src/services/session.js` | Session structure is used everywhere |
 | `src/handlers/actions.js` | Button callbacks are tied to specific flows |
 | `src/bot.js` | Core bootstrapping |
+| `src/services/recovery.js` | The parser must match `generateCVPreview()` exactly |
 
 ### Files That Are Safe to Modify
 
@@ -1597,6 +1801,7 @@ Yes! The code is open source. You can customize it with your branding.
 3. **Always handle errors** with user-friendly messages
 4. **Always clear `tempEntry`** after pushing to array
 5. **Always check edit mode** when continuing from sections
+6. **Always check recovery mode FIRST** in `handleText()`
 
 ### How to Safely Introduce New Features
 
@@ -1614,6 +1819,7 @@ Yes! The code is open source. You can customize it with your branding.
 3. **Always validate** - no empty required fields
 4. **Always escape HTML** - prevent injection
 5. **Always clean up temp files** - no orphaned PDFs
+6. **Always wrap callback queries** - use `safeAnswerCbQuery()`
 
 ---
 
@@ -1623,10 +1829,12 @@ Yes! The code is open source. You can customize it with your branding.
 
 | File | What It Does |
 |------|--------------|
-| `src/bot.js` | Entry point |
+| `src/bot.js` | Entry point (Express + Telegraf) |
 | `src/handlers/text.js` | All interview logic |
 | `src/handlers/actions.js` | All button logic |
+| `src/handlers/commands.js` | All command logic including /recover |
 | `src/services/session.js` | Session management |
+| `src/services/recovery.js` | CV recovery parser |
 | `src/templates/harvard.js` | PDF generation |
 
 ### Core Commands
@@ -1637,6 +1845,7 @@ Yes! The code is open source. You can customize it with your branding.
 | `/help` | Help |
 | `/startover` | Reset |
 | `/cancel` | Cancel |
+| `/recover` | Recover CV from preview |
 
 ### Step Constants (Most Common)
 
@@ -1655,6 +1864,8 @@ Yes! The code is open source. You can customize it with your branding.
 
 ```
 /start → Create CV → Personal Details → Summary → Education → Experience → Skills → Projects → Activities → Certifications → References → Preview → Edit (optional) → Looks Good → PDF
+
+/recover → Paste preview → Parse → Generate PDF
 ```
 
 ### Debugging Quick Tips
@@ -1666,3 +1877,41 @@ Yes! The code is open source. You can customize it with your branding.
 | PDF not generating | Check temp directory, Puppeteer |
 | Button not working | Check callback data in actions.js |
 | Wrong question asked | Check currentStep in session |
+| Recovery not working | Check logs in processRecoveryText() |
+| Chrome not found | Check puppeteer.config.cjs and build logs |
+
+---
+
+## Documentation Update Summary
+
+### Significant Changes Made
+
+1. **Added `/recover` command**: Documented the new recovery feature including how it works, when to use it, and the parser logic.
+
+2. **Updated Commands section**: Added `/recover` to the command list and BotFather setup instructions.
+
+3. **Added Recovery System to Features**: Documented the CV recovery system as a key feature.
+
+4. **Added Recovery Mode to Conversation Flow**: Explained how recovery mode is checked first in `handleText()`.
+
+5. **Updated Session Structure**: Added note about `mode: 'recovery'` in the flow object.
+
+6. **Added Puppeteer Configuration**: Documented `puppeteer.config.cjs` and the project-local cache approach for Render.
+
+7. **Added Callback Query Error Handling**: Documented `safeAnswerCbQuery()` and how expired callback queries are handled.
+
+8. **Added Express Server Documentation**: Explained why Express is used (Render health checks).
+
+9. **Updated File-by-File Explanation**: Added `recovery.js` and updated `commands.js` with the `/recover` handler.
+
+10. **Updated Folder Structure**: Added `.cache/` and `puppeteer.config.cjs` to the structure.
+
+11. **Updated BotFather Commands**: Added `/recover` to the command list.
+
+12. **Updated Build Command for Render**: Added `npx puppeteer browsers install chrome` to the build command.
+
+13. **Added Recovery to Quick Reference**: Updated the quick flow reference and debugging tips.
+
+14. **Updated Troubleshooting**: Added section for "Recovery Not Working".
+
+15. **Updated Best Practices**: Added recovery mode check to "How to Avoid Breaking Conversation Flow".

@@ -87,17 +87,36 @@ const { Markup } = require('telegraf');
  */
 function handleText(ctx) {
   const session = ctx.session;
-  const currentStep = session.flow.currentStep;
   const text = ctx.message.text.trim();
   
-  // Check if we're in recovery mode
-  if (session.flow.mode === 'recovery' && currentStep === 'RECOVERY_WAITING') {
+  console.log('🔍 handleText START - session exists?', !!session);
+  if (session) {
+    console.log(`🔍 handleText - session mode: ${session.flow.mode}, currentStep: ${session.flow.currentStep}`);
+    console.log(`🔍 handleText - session object keys: ${Object.keys(session).join(', ')}`);
+    console.log(`🔍 handleText - flow keys: ${Object.keys(session.flow).join(', ')}`);
+  } else {
+    console.log('🔍 handleText - session is undefined!');
+  }
+  
+  // DEBUG: Log every text message received
+  console.log('📝 Text received:', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
+  
+  // IMPORTANT: Check recovery mode FIRST, before any other validation
+  // This ensures recovery text is processed even when currentStep is null
+  if (session && session.flow.mode === 'recovery' && session.flow.currentStep === 'RECOVERY_WAITING') {
+    console.log('🔍 Entering recovery parser');
     return processRecoveryText(ctx, text);
   }
   
+  // Now check if we have a valid current step
+  const currentStep = session?.flow?.currentStep;
+  
   if (!currentStep) {
+    console.log('❌ No currentStep - replying with "Please use /start"');
     return ctx.reply('Please use /start to begin the CV creation process.');
   }
+  
+  console.log(`➡️ Routing to step: ${currentStep}`);
   
   switch (currentStep) {
     // Phase 1 steps
@@ -200,7 +219,6 @@ function handleText(ctx) {
       return ctx.reply('I\'m not sure what to do with that. Please follow the prompts.');
   }
 }
-
 
 // Phase 1 handlers
 function handleFullName(ctx, text) {

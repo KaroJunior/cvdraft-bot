@@ -2,11 +2,13 @@ const { generateCVPreview } = require('./preview');
 
 /**
  * Parses a plain-text CV preview back into a CV data object
+ * This parser is the exact inverse of generateCVPreview()
  * @param {string} previewText - The CV preview text from the user
  * @returns {Object} - Parsed CV data object
  */
 function parseCVFromPreview(previewText) {
-  const lines = previewText.split('\n').map(line => line.trim());
+  const lines = previewText.split('\n').map(line => line.trimEnd());
+  
   const cv = {
     personal: {
       fullName: null,
@@ -38,6 +40,78 @@ function parseCVFromPreview(previewText) {
     referencesOnRequest: false,
   };
   
+  // Remove markdown code block markers and decorative headers
+  const cleanLines = lines.filter(line => 
+    !line.startsWith('```') && 
+    !line.startsWith('📄') &&
+    !line.startsWith('*') &&
+    !line.startsWith('✏️') &&
+    !line.startsWith('✅') &&
+    !line.startsWith('⚠️') &&
+    line.length > 0
+  );
+  
+  // Phase 1: Parse header (Name, Target Role, Contact)
+  let i = 0;
+  
+  // Skip any leading empty lines or decorative text
+  while (i < cleanLines.length && cleanLines[i].trim() === '') {
+    i++;
+  }
+  
+  // 1. Full name (first non-empty line, usually uppercase)
+  if (i < cleanLines.length) {
+    cv.personal.fullName = cleanLines[i].trim();
+    i++;
+  }
+  
+  // Skip empty line after name
+  if (i < cleanLines.length && cleanLines[i].trim() === '') {
+    i++;
+  }
+  
+  // 2. Target role (second line, not containing | or @)
+  if (i < cleanLines.length) {
+    const line = cleanLines[i].trim();
+    if (line && !line.includes('|') && !line.includes('@') && !line.includes('.')) {
+      cv.targetRole = line;
+      i++;
+    }
+  }
+  
+  // Skip empty line after target role
+  if (i < cleanLines.length && cleanLines[i].trim() === '') {
+    i++;
+  }
+  
+  // 3. Contact line (contains | separators)
+  if (i < cleanLines.length) {
+    const line = cleanLines[i].trim();
+    if (line.includes('|')) {
+      const parts = line.split('|').map(p => p.trim());
+      parts.forEach(part => {
+        if (part.includes('@')) {
+          cv.personal.email = part;
+        } else if (part.includes('+') || /^\d[\d\s\-()]+$/.test(part.replace(/\s/g, ''))) {
+          cv.personal.phone = part;
+        } else if (part.toLowerCase().includes('linkedin')) {
+          cv.personal.linkedin = part;
+        } else if (part.startsWith('http://') || part.startsWith('https://')) {
+          cv.personal.website = part;
+        } else if (!cv.personal.location) {
+          cv.personal.location = part;
+        }
+      });
+      i++;
+    }
+  }
+  
+  // Skip empty line after contact
+  if (i < cleanLines.length && cleanLines[i].trim() === '') {
+    i++;
+  }
+  
+  // Phase 2: Parse sections
   let currentSection = null;
   let currentEntry = null;
   let educationEntries = [];
@@ -48,120 +122,72 @@ function parseCVFromPreview(previewText) {
   let skillsTechnical = [];
   let skillsLanguages = [];
   let skillsOther = [];
-  let foundName = false;
-  let foundSummary = false;
-  let foundEducation = false;
   
-  // Remove markdown code block markers if present
-  const cleanLines = lines.filter(line => 
-    !line.startsWith('```') && 
-    !line.startsWith('📄 *Your CV Preview*') &&
-    !line.startsWith('*') &&
-    line.length > 0
-  );
-  
-  for (let i = 0; i < cleanLines.length; i++) {
+  while (i < cleanLines.length) {
     const line = cleanLines[i];
-    const nextLine = i + 1 < cleanLines.length ? cleanLines[i + 1] : '';
+    const trimmedLine = line.trim();
+    
+    // Check for section headers (exact match)
+    if (trimmedLine === 'PROFESSIONAL SUMMARY') {
+      currentSection = 'summary';
+      i++;
+      continue;
+    } else if (trimmedLine === 'EDUCATION') {
+      currentSection = 'education';
+      currentEntry = null;
+      i++;
+      continue;
+    } else if (trimmedLine === 'EXPERIENCE') {
+      currentSection = 'experience';
+      currentEntry = null;
+      i++;
+      continue;
+    } else if (trimmedLine === 'SKILLS') {
+      currentSection = 'skills';
+      i++;
+      continue;
+    } else if (trimmedLine === 'PROJECTS') {
+      currentSection = 'projects';
+      currentEntry = null;
+      i++;
+      continue;
+    } else if (trimmedLine === 'ACTIVITIES / LEADERSHIP / VOLUNTEER') {
+      currentSection = 'activities';
+      currentEntry = null;
+      i++;
+      continue;
+    } else if (trimmedLine === 'CERTIFICATIONS / AWARDS') {
+      currentSection = 'certifications';
+      currentEntry = null;
+      i++;
+      continue;
+    } else if (trimmedLine === 'References available on request') {
+      cv.referencesOnRequest = true;
+      i++;
+      continue;
+    }
     
     // Skip empty lines
-    if (!line) continue;
-    
-    // Check for section headers
-    if (line === 'PROFESSIONAL SUMMARY') {
-      currentSection = 'summary';
-      continue;
-    }
-    if (line === 'EDUCATION') {
-      currentSection = 'education';
-      educationEntries = [];
-      currentEntry = null;
-      continue;
-    }
-    if (line === 'EXPERIENCE') {
-      currentSection = 'experience';
-      experienceEntries = [];
-      currentEntry = null;
-      continue;
-    }
-    if (line === 'SKILLS') {
-      currentSection = 'skills';
-      continue;
-    }
-    if (line === 'PROJECTS') {
-      currentSection = 'projects';
-      projectEntries = [];
-      currentEntry = null;
-      continue;
-    }
-    if (line === 'ACTIVITIES / LEADERSHIP / VOLUNTEER') {
-      currentSection = 'activities';
-      activityEntries = [];
-      currentEntry = null;
-      continue;
-    }
-    if (line === 'CERTIFICATIONS / AWARDS') {
-      currentSection = 'certifications';
-      certificationEntries = [];
-      currentEntry = null;
-      continue;
-    }
-    if (line === 'References available on request') {
-      cv.referencesOnRequest = true;
+    if (trimmedLine === '') {
+      i++;
       continue;
     }
     
     // Parse based on current section
     switch (currentSection) {
-      case null:
-        // This is the name section (before any section headers)
-        if (!foundName && line && !line.includes('|') && !line.includes('@')) {
-          // Could be name or target role
-          if (!cv.personal.fullName) {
-            cv.personal.fullName = line;
-            foundName = true;
-          } else if (!cv.targetRole) {
-            // Check if this looks like a target role (not a contact line)
-            if (!line.includes('|') && !line.includes('@') && !line.includes('.')) {
-              cv.targetRole = line;
-            }
-          }
-        } else if (line.includes('|') || line.includes('@') || line.includes('+')) {
-          // Contact line
-          const parts = line.split('|').map(p => p.trim());
-          parts.forEach(part => {
-            if (part.includes('@')) {
-              cv.personal.email = part;
-            } else if (part.includes('+') || /^\d[\d\s\-()]+$/.test(part)) {
-              cv.personal.phone = part;
-            } else if (part.includes('linkedin') || part.includes('linkedin.com')) {
-              cv.personal.linkedin = part;
-            } else if (part.startsWith('http://') || part.startsWith('https://')) {
-              cv.personal.website = part;
-            } else if (!cv.personal.location) {
-              cv.personal.location = part;
-            }
-          });
-        }
-        break;
-        
       case 'summary':
-        if (line && line !== 'PROFESSIONAL SUMMARY') {
-          cv.summary = line;
-          foundSummary = true;
-          currentSection = null;
+        // Summary is the next non-empty line after the header
+        if (trimmedLine && trimmedLine !== 'PROFESSIONAL SUMMARY') {
+          cv.summary = trimmedLine;
+          currentSection = null; // Don't process more lines as summary
         }
+        i++;
         break;
         
       case 'education':
-        if (line === 'EDUCATION') break;
-        if (line === '' || line === 'GPA:') break;
-        
-        // Check if this is a new entry (school name or degree line)
-        if (!currentEntry || (line.includes(' in ') && !line.includes('GPA'))) {
-          if (currentEntry && (currentEntry.school || currentEntry.degree)) {
-            educationEntries.push(currentEntry);
-          }
+        // Check if this is a new entry
+        // A new entry starts with a school name (not containing ' – ' and not starting with 'GPA:')
+        if (!currentEntry && trimmedLine && !trimmedLine.startsWith('GPA:') && !trimmedLine.includes(' – ')) {
           currentEntry = {
             school: null,
             degree: null,
@@ -174,54 +200,94 @@ function parseCVFromPreview(previewText) {
           };
         }
         
-        // Parse the line based on content
-        if (line.startsWith('GPA:')) {
-          currentEntry.gpa = line.replace('GPA:', '').trim();
-        } else if (line.match(/^\d{4}\s*[–-]\s*/) || line.match(/^\d{4}$/)) {
-          // Date range
-          const parts = line.split(/[–-]/).map(p => p.trim());
-          if (parts.length === 2) {
-            currentEntry.startYear = parts[0];
-            currentEntry.endYear = parts[1];
-            if (parts[1].toLowerCase().includes('present')) {
-              currentEntry.isInProgress = true;
+        if (currentEntry) {
+          // School line (may contain comma for location)
+          if (!currentEntry.school && trimmedLine && !trimmedLine.startsWith('GPA:') && !trimmedLine.includes(' – ')) {
+            if (trimmedLine.includes(',')) {
+              const parts = trimmedLine.split(',').map(p => p.trim());
+              currentEntry.school = parts[0];
+              if (parts.length > 1) {
+                currentEntry.location = parts.slice(1).join(', ');
+              }
+            } else {
+              currentEntry.school = trimmedLine;
             }
-          } else if (parts.length === 1) {
-            currentEntry.startYear = parts[0];
+            i++;
+            continue;
           }
-        } else if (line.includes(' in ')) {
-          // Degree line
-          const parts = line.split(' in ');
-          currentEntry.degree = parts[0].trim();
-          currentEntry.field = parts[1].trim();
-        } else if (line.includes(',')) {
-          // School with location
-          const parts = line.split(',').map(p => p.trim());
-          currentEntry.school = parts[0];
-          if (parts.length > 1) {
-            currentEntry.location = parts.slice(1).join(', ');
+          
+          // Degree line (contains ' in ')
+          if (!currentEntry.degree && trimmedLine && trimmedLine.includes(' in ')) {
+            const parts = trimmedLine.split(' in ');
+            currentEntry.degree = parts[0].trim();
+            currentEntry.field = parts[1].trim();
+            i++;
+            continue;
           }
-        } else if (line && !line.startsWith('GPA:')) {
-          // Could be school name, degree, or field
-          if (!currentEntry.school) {
-            currentEntry.school = line;
-          } else if (!currentEntry.degree) {
-            currentEntry.degree = line;
-          } else if (!currentEntry.field) {
-            currentEntry.field = line;
+          
+          // Date line (contains ' – ')
+          if (!currentEntry.startYear && trimmedLine && trimmedLine.includes(' – ')) {
+            const parts = trimmedLine.split(' – ').map(p => p.trim());
+            if (parts.length === 2) {
+              currentEntry.startYear = parts[0];
+              currentEntry.endYear = parts[1];
+              if (parts[1].toLowerCase().includes('present')) {
+                currentEntry.isInProgress = true;
+              }
+            }
+            i++;
+            continue;
+          }
+          
+          // GPA line
+          if (!currentEntry.gpa && trimmedLine.startsWith('GPA:')) {
+            currentEntry.gpa = trimmedLine.replace('GPA:', '').trim();
+            // Save the entry and move to next
+            if (currentEntry.school || currentEntry.degree) {
+              educationEntries.push(currentEntry);
+              currentEntry = null;
+            }
+            i++;
+            continue;
+          }
+          
+          // If we have a school but no degree, and we hit a line that looks like a date
+          if (currentEntry.school && !currentEntry.degree && trimmedLine && trimmedLine.match(/^\d{4}/)) {
+            // This might be a date line for a school with no degree
+            // Check if it's a date range
+            if (trimmedLine.includes(' – ')) {
+              const parts = trimmedLine.split(' – ').map(p => p.trim());
+              if (parts.length === 2) {
+                currentEntry.startYear = parts[0];
+                currentEntry.endYear = parts[1];
+                if (parts[1].toLowerCase().includes('present')) {
+                  currentEntry.isInProgress = true;
+                }
+              }
+              // Save entry
+              educationEntries.push(currentEntry);
+              currentEntry = null;
+              i++;
+              continue;
+            }
           }
         }
+        
+        // If we have a completed entry and hit an empty line or new section
+        if (currentEntry && (trimmedLine === '' || trimmedLine === 'EXPERIENCE' || trimmedLine === 'SKILLS')) {
+          if (currentEntry.school || currentEntry.degree) {
+            educationEntries.push(currentEntry);
+          }
+          currentEntry = null;
+        }
+        
+        i++;
         break;
         
       case 'experience':
-        if (line === 'EXPERIENCE') break;
-        if (line === '' || line.startsWith('•')) break;
-        
-        // Check if this is a new entry (title line)
-        if (!currentEntry || (line.includes(' - ') && !line.startsWith('•'))) {
-          if (currentEntry && (currentEntry.title || currentEntry.company)) {
-            experienceEntries.push(currentEntry);
-          }
+        // Check if this is a new entry
+        // A new entry starts with a title line (contains ' - ')
+        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
           currentEntry = {
             title: null,
             company: null,
@@ -231,11 +297,9 @@ function parseCVFromPreview(previewText) {
             isCurrent: false,
             bullets: [],
           };
-        }
-        
-        // Parse the line
-        if (line.includes(' - ') && !line.startsWith('•')) {
-          const parts = line.split(' - ').map(p => p.trim());
+          
+          // Parse title line
+          const parts = trimmedLine.split(' - ').map(p => p.trim());
           currentEntry.title = parts[0];
           if (parts.length > 1) {
             const companyPart = parts[1];
@@ -247,128 +311,174 @@ function parseCVFromPreview(previewText) {
               currentEntry.company = companyPart;
             }
           }
-        } else if (line.match(/^\w+\s+\d{4}/) || line.match(/^\d{4}/) || line.includes('Present')) {
-          // Date range
-          const parts = line.split(/[–-]/).map(p => p.trim());
-          if (parts.length === 2) {
-            currentEntry.startDate = parts[0];
-            currentEntry.endDate = parts[1];
-            if (parts[1].toLowerCase().includes('present')) {
-              currentEntry.isCurrent = true;
+          i++;
+          continue;
+        }
+        
+        if (currentEntry) {
+          // Date line (contains ' – ')
+          if (!currentEntry.startDate && trimmedLine && trimmedLine.includes(' – ')) {
+            const parts = trimmedLine.split(' – ').map(p => p.trim());
+            if (parts.length === 2) {
+              currentEntry.startDate = parts[0];
+              currentEntry.endDate = parts[1];
+              if (parts[1].toLowerCase().includes('present')) {
+                currentEntry.isCurrent = true;
+              }
             }
-          } else if (parts.length === 1) {
-            currentEntry.startDate = parts[0];
+            i++;
+            continue;
           }
-        } else if (line.startsWith('•')) {
-          // Bullet point
-          const bullet = line.replace(/^•\s*/, '').trim();
-          if (bullet) {
-            currentEntry.bullets.push(bullet);
+          
+          // Bullet point (starts with '•')
+          if (trimmedLine.startsWith('•')) {
+            const bullet = trimmedLine.replace(/^•\s*/, '').trim();
+            if (bullet) {
+              currentEntry.bullets.push(bullet);
+            }
+            i++;
+            continue;
           }
-        } else if (line && !line.startsWith('•')) {
-          // Could be company/location or additional info
-          if (!currentEntry.company) {
-            currentEntry.company = line;
-          } else if (!currentEntry.location) {
-            currentEntry.location = line;
+          
+          // If we hit a line that doesn't match any pattern, it might be a company line without title
+          if (!currentEntry.company && trimmedLine && !trimmedLine.startsWith('•') && !trimmedLine.includes(' – ') && !trimmedLine.includes(' – ')) {
+            // Check if it's a date
+            if (!trimmedLine.match(/^\d{4}/)) {
+              currentEntry.company = trimmedLine;
+            }
+            i++;
+            continue;
+          }
+          
+          // Save entry when we hit an empty line or new section
+          if (trimmedLine === '' || trimmedLine === 'SKILLS' || trimmedLine === 'PROJECTS') {
+            if (currentEntry.title || currentEntry.company) {
+              experienceEntries.push(currentEntry);
+            }
+            currentEntry = null;
           }
         }
+        
+        i++;
         break;
         
       case 'skills':
-        if (line === 'SKILLS') break;
-        if (line.startsWith('Technical:')) {
-          const tech = line.replace('Technical:', '').trim();
-          skillsTechnical = tech.split(',').map(s => s.trim()).filter(s => s);
-        } else if (line.startsWith('Languages:')) {
-          const langs = line.replace('Languages:', '').trim();
-          skillsLanguages = langs.split(',').map(s => s.trim()).filter(s => s);
-        } else if (line.startsWith('Other:')) {
-          const other = line.replace('Other:', '').trim();
-          skillsOther = other.split(',').map(s => s.trim()).filter(s => s);
+        if (trimmedLine.startsWith('Technical:')) {
+          const tech = trimmedLine.replace('Technical:', '').trim();
+          skillsTechnical = tech ? tech.split(',').map(s => s.trim()).filter(s => s) : [];
+        } else if (trimmedLine.startsWith('Languages:')) {
+          const langs = trimmedLine.replace('Languages:', '').trim();
+          skillsLanguages = langs ? langs.split(',').map(s => s.trim()).filter(s => s) : [];
+        } else if (trimmedLine.startsWith('Other:')) {
+          const other = trimmedLine.replace('Other:', '').trim();
+          skillsOther = other ? other.split(',').map(s => s.trim()).filter(s => s) : [];
         }
+        i++;
         break;
         
       case 'projects':
-        if (line === 'PROJECTS') break;
-        if (line === '' || line.startsWith('Technologies:') || line.startsWith(' ')) break;
-        
-        if (!currentEntry || (line && !line.startsWith('Technologies:') && !currentEntry.name)) {
-          if (currentEntry && currentEntry.name) {
-            projectEntries.push(currentEntry);
-          }
+        // Check if this is a new entry
+        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
           currentEntry = {
             name: null,
             role: null,
             tech: [],
             description: null,
           };
-        }
-        
-        if (line.startsWith('Technologies:')) {
-          const tech = line.replace('Technologies:', '').trim();
-          currentEntry.tech = tech.split(',').map(s => s.trim()).filter(s => s);
-        } else if (line.includes(' - ')) {
-          const parts = line.split(' - ').map(p => p.trim());
+          
+          const parts = trimmedLine.split(' - ').map(p => p.trim());
           currentEntry.name = parts[0];
           if (parts.length > 1) {
             currentEntry.role = parts[1];
           }
-        } else if (line && !currentEntry.name) {
-          currentEntry.name = line;
-        } else if (line && !currentEntry.description) {
-          currentEntry.description = line;
+          i++;
+          continue;
         }
+        
+        if (currentEntry) {
+          // Technologies line
+          if (trimmedLine.startsWith('Technologies:')) {
+            const tech = trimmedLine.replace('Technologies:', '').trim();
+            currentEntry.tech = tech ? tech.split(',').map(s => s.trim()).filter(s => s) : [];
+            i++;
+            continue;
+          }
+          
+          // Description (any line that's not empty and not a header)
+          if (!currentEntry.description && trimmedLine && !trimmedLine.startsWith('Technologies:') && !trimmedLine.includes(' - ')) {
+            currentEntry.description = trimmedLine;
+            // Description is the last field, so save the entry
+            if (currentEntry.name) {
+              projectEntries.push(currentEntry);
+              currentEntry = null;
+            }
+            i++;
+            continue;
+          }
+        }
+        
+        // If we have a name but no description and hit empty line or new section
+        if (currentEntry && currentEntry.name && (trimmedLine === '' || trimmedLine === 'ACTIVITIES' || trimmedLine === 'CERTIFICATIONS')) {
+          projectEntries.push(currentEntry);
+          currentEntry = null;
+        }
+        
+        i++;
         break;
         
       case 'activities':
-        if (line === 'ACTIVITIES / LEADERSHIP / VOLUNTEER') break;
-        if (line === '') break;
-        
-        if (!currentEntry || (line && !currentEntry.title)) {
-          if (currentEntry && currentEntry.title) {
-            activityEntries.push(currentEntry);
-          }
+        // Check if this is a new entry
+        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
           currentEntry = {
             title: null,
             organization: null,
             description: null,
           };
-        }
-        
-        if (line.includes(' - ')) {
-          const parts = line.split(' - ').map(p => p.trim());
+          
+          const parts = trimmedLine.split(' - ').map(p => p.trim());
           currentEntry.title = parts[0];
           if (parts.length > 1) {
             currentEntry.organization = parts[1];
           }
-        } else if (line && !currentEntry.title) {
-          currentEntry.title = line;
-        } else if (line && !currentEntry.description) {
-          currentEntry.description = line;
+          i++;
+          continue;
         }
+        
+        if (currentEntry) {
+          // Description (any line that's not empty)
+          if (!currentEntry.description && trimmedLine && !trimmedLine.includes(' - ')) {
+            currentEntry.description = trimmedLine;
+            // Save the entry
+            if (currentEntry.title) {
+              activityEntries.push(currentEntry);
+              currentEntry = null;
+            }
+            i++;
+            continue;
+          }
+        }
+        
+        // If we have a title but no description and hit empty line or new section
+        if (currentEntry && currentEntry.title && (trimmedLine === '' || trimmedLine === 'CERTIFICATIONS' || trimmedLine === 'References')) {
+          activityEntries.push(currentEntry);
+          currentEntry = null;
+        }
+        
+        i++;
         break;
         
       case 'certifications':
-        if (line === 'CERTIFICATIONS / AWARDS') break;
-        if (line === '') break;
-        
-        if (!currentEntry || (line && !currentEntry.name)) {
-          if (currentEntry && currentEntry.name) {
-            certificationEntries.push(currentEntry);
-          }
+        // Check if this is a new entry
+        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
           currentEntry = {
             name: null,
             issuer: null,
             year: null,
           };
-        }
-        
-        if (line.includes(' - ')) {
-          const parts = line.split(' - ').map(p => p.trim());
+          
+          const parts = trimmedLine.split(' - ').map(p => p.trim());
           currentEntry.name = parts[0];
           if (parts.length > 1) {
-            // Check if there's a year in parentheses
             const issuerPart = parts[1];
             const yearMatch = issuerPart.match(/\((\d{4})\)/);
             if (yearMatch) {
@@ -378,25 +488,22 @@ function parseCVFromPreview(previewText) {
               currentEntry.issuer = issuerPart;
             }
           }
-        } else if (line.match(/\(\d{4}\)/)) {
-          // Year only
-          const yearMatch = line.match(/\((\d{4})\)/);
-          if (yearMatch) {
-            currentEntry.year = yearMatch[1];
+          // Save immediately (certifications are single line)
+          if (currentEntry.name) {
+            certificationEntries.push(currentEntry);
+            currentEntry = null;
           }
-          currentEntry.name = line.replace(/\(.*\)/, '').trim();
-        } else if (line && !currentEntry.name) {
-          currentEntry.name = line;
-        } else if (line && !currentEntry.issuer) {
-          currentEntry.issuer = line;
-        } else if (line && !currentEntry.year) {
-          currentEntry.year = line;
         }
+        i++;
+        break;
+        
+      default:
+        i++;
         break;
     }
   }
   
-  // Push any remaining entries
+  // Save any remaining entries
   if (currentEntry) {
     if (currentSection === 'education' && (currentEntry.school || currentEntry.degree)) {
       educationEntries.push(currentEntry);

@@ -41,25 +41,21 @@ function parseCVFromPreview(previewText) {
   };
   
   // Remove markdown code block markers and decorative headers
-  const cleanLines = lines.filter(line => 
-    !line.startsWith('```') && 
-    !line.startsWith('📄') &&
-    !line.startsWith('*') &&
-    !line.startsWith('✏️') &&
-    !line.startsWith('✅') &&
-    !line.startsWith('⚠️') &&
-    line.length > 0
-  );
+  const cleanLines = lines.filter(line => {
+    const trimmed = line.trim();
+    return !trimmed.startsWith('```') && 
+           !trimmed.startsWith('📄') &&
+           !trimmed.startsWith('*') &&
+           !trimmed.startsWith('✏️') &&
+           !trimmed.startsWith('✅') &&
+           !trimmed.startsWith('⚠️') &&
+           trimmed.length > 0;
+  });
   
   // Phase 1: Parse header (Name, Target Role, Contact)
   let i = 0;
   
-  // Skip any leading empty lines or decorative text
-  while (i < cleanLines.length && cleanLines[i].trim() === '') {
-    i++;
-  }
-  
-  // 1. Full name (first non-empty line, usually uppercase)
+  // 1. Full name (first non-empty line)
   if (i < cleanLines.length) {
     cv.personal.fullName = cleanLines[i].trim();
     i++;
@@ -122,46 +118,74 @@ function parseCVFromPreview(previewText) {
   let skillsTechnical = [];
   let skillsLanguages = [];
   let skillsOther = [];
+  let summaryText = null;
+  
+  // Helper function to save the current entry when leaving a section
+  const saveCurrentEntry = () => {
+    if (!currentEntry) return;
+    
+    if (currentSection === 'education' && (currentEntry.school || currentEntry.degree)) {
+      educationEntries.push(currentEntry);
+    } else if (currentSection === 'experience' && (currentEntry.title || currentEntry.company)) {
+      experienceEntries.push(currentEntry);
+    } else if (currentSection === 'projects' && currentEntry.name) {
+      projectEntries.push(currentEntry);
+    } else if (currentSection === 'activities' && currentEntry.title) {
+      activityEntries.push(currentEntry);
+    } else if (currentSection === 'certifications' && currentEntry.name) {
+      certificationEntries.push(currentEntry);
+    }
+    
+    currentEntry = null;
+  };
   
   while (i < cleanLines.length) {
     const line = cleanLines[i];
     const trimmedLine = line.trim();
     
-    // Check for section headers (exact match)
+    // Check for section headers (case-sensitive exact match)
     if (trimmedLine === 'PROFESSIONAL SUMMARY') {
+      saveCurrentEntry();
       currentSection = 'summary';
       i++;
       continue;
     } else if (trimmedLine === 'EDUCATION') {
+      saveCurrentEntry();
       currentSection = 'education';
       currentEntry = null;
       i++;
       continue;
     } else if (trimmedLine === 'EXPERIENCE') {
+      saveCurrentEntry();
       currentSection = 'experience';
       currentEntry = null;
       i++;
       continue;
     } else if (trimmedLine === 'SKILLS') {
+      saveCurrentEntry();
       currentSection = 'skills';
       i++;
       continue;
     } else if (trimmedLine === 'PROJECTS') {
+      saveCurrentEntry();
       currentSection = 'projects';
       currentEntry = null;
       i++;
       continue;
     } else if (trimmedLine === 'ACTIVITIES / LEADERSHIP / VOLUNTEER') {
+      saveCurrentEntry();
       currentSection = 'activities';
       currentEntry = null;
       i++;
       continue;
     } else if (trimmedLine === 'CERTIFICATIONS / AWARDS') {
+      saveCurrentEntry();
       currentSection = 'certifications';
       currentEntry = null;
       i++;
       continue;
     } else if (trimmedLine === 'References available on request') {
+      saveCurrentEntry();
       cv.referencesOnRequest = true;
       i++;
       continue;
@@ -176,18 +200,19 @@ function parseCVFromPreview(previewText) {
     // Parse based on current section
     switch (currentSection) {
       case 'summary':
-        // Summary is the next non-empty line after the header
         if (trimmedLine && trimmedLine !== 'PROFESSIONAL SUMMARY') {
-          cv.summary = trimmedLine;
-          currentSection = null; // Don't process more lines as summary
+          summaryText = trimmedLine;
+          currentSection = null;
         }
         i++;
         break;
         
       case 'education':
-        // Check if this is a new entry
-        // A new entry starts with a school name (not containing ' – ' and not starting with 'GPA:')
-        if (!currentEntry && trimmedLine && !trimmedLine.startsWith('GPA:') && !trimmedLine.includes(' – ')) {
+        // If we don't have a current entry and this line doesn't look like a date or GPA
+        if (!currentEntry && trimmedLine && 
+            !trimmedLine.startsWith('GPA:') && 
+            !trimmedLine.includes(' – ') && 
+            !trimmedLine.match(/^\d{4}/)) {
           currentEntry = {
             school: null,
             degree: null,
@@ -201,8 +226,11 @@ function parseCVFromPreview(previewText) {
         }
         
         if (currentEntry) {
-          // School line (may contain comma for location)
-          if (!currentEntry.school && trimmedLine && !trimmedLine.startsWith('GPA:') && !trimmedLine.includes(' – ')) {
+          // School line
+          if (!currentEntry.school && trimmedLine && 
+              !trimmedLine.startsWith('GPA:') && 
+              !trimmedLine.includes(' – ') && 
+              !trimmedLine.match(/^\d{4}/)) {
             if (trimmedLine.includes(',')) {
               const parts = trimmedLine.split(',').map(p => p.trim());
               currentEntry.school = parts[0];
@@ -217,10 +245,24 @@ function parseCVFromPreview(previewText) {
           }
           
           // Degree line (contains ' in ')
-          if (!currentEntry.degree && trimmedLine && trimmedLine.includes(' in ')) {
+          if (!currentEntry.degree && trimmedLine && 
+              trimmedLine.includes(' in ') && 
+              !trimmedLine.startsWith('GPA:') && 
+              !trimmedLine.includes(' – ')) {
             const parts = trimmedLine.split(' in ');
             currentEntry.degree = parts[0].trim();
             currentEntry.field = parts[1].trim();
+            i++;
+            continue;
+          }
+          
+          // Degree line without 'in'
+          if (!currentEntry.degree && trimmedLine && 
+              !trimmedLine.startsWith('GPA:') && 
+              !trimmedLine.includes(' – ') && 
+              !trimmedLine.match(/^\d{4}/) &&
+              !trimmedLine.includes(',')) {
+            currentEntry.degree = trimmedLine;
             i++;
             continue;
           }
@@ -231,7 +273,8 @@ function parseCVFromPreview(previewText) {
             if (parts.length === 2) {
               currentEntry.startYear = parts[0];
               currentEntry.endYear = parts[1];
-              if (parts[1].toLowerCase().includes('present')) {
+              if (parts[1].toLowerCase().includes('present') || 
+                  parts[1].toLowerCase().includes('current')) {
                 currentEntry.isInProgress = true;
               }
             }
@@ -239,10 +282,16 @@ function parseCVFromPreview(previewText) {
             continue;
           }
           
+          // Date line without ' – ' (single year)
+          if (!currentEntry.startYear && trimmedLine && trimmedLine.match(/^\d{4}$/)) {
+            currentEntry.startYear = trimmedLine;
+            i++;
+            continue;
+          }
+          
           // GPA line
           if (!currentEntry.gpa && trimmedLine.startsWith('GPA:')) {
             currentEntry.gpa = trimmedLine.replace('GPA:', '').trim();
-            // Save the entry and move to next
             if (currentEntry.school || currentEntry.degree) {
               educationEntries.push(currentEntry);
               currentEntry = null;
@@ -251,30 +300,38 @@ function parseCVFromPreview(previewText) {
             continue;
           }
           
-          // If we have a school but no degree, and we hit a line that looks like a date
-          if (currentEntry.school && !currentEntry.degree && trimmedLine && trimmedLine.match(/^\d{4}/)) {
-            // This might be a date line for a school with no degree
-            // Check if it's a date range
-            if (trimmedLine.includes(' – ')) {
-              const parts = trimmedLine.split(' – ').map(p => p.trim());
-              if (parts.length === 2) {
-                currentEntry.startYear = parts[0];
-                currentEntry.endYear = parts[1];
-                if (parts[1].toLowerCase().includes('present')) {
-                  currentEntry.isInProgress = true;
-                }
+          // School with no degree, hit a date line
+          if (currentEntry.school && !currentEntry.degree && trimmedLine && trimmedLine.includes(' – ')) {
+            const parts = trimmedLine.split(' – ').map(p => p.trim());
+            if (parts.length === 2) {
+              currentEntry.startYear = parts[0];
+              currentEntry.endYear = parts[1];
+              if (parts[1].toLowerCase().includes('present') || 
+                  parts[1].toLowerCase().includes('current')) {
+                currentEntry.isInProgress = true;
               }
-              // Save entry
+            }
+            if (currentEntry.school) {
               educationEntries.push(currentEntry);
               currentEntry = null;
-              i++;
-              continue;
             }
+            i++;
+            continue;
+          }
+          
+          // Complete entry
+          if (currentEntry.school && currentEntry.degree && currentEntry.startYear) {
+            educationEntries.push(currentEntry);
+            currentEntry = null;
+            continue;
           }
         }
         
-        // If we have a completed entry and hit an empty line or new section
-        if (currentEntry && (trimmedLine === '' || trimmedLine === 'EXPERIENCE' || trimmedLine === 'SKILLS')) {
+        // Entry completed on exit
+        if (currentEntry && (trimmedLine === '' || 
+            trimmedLine === 'EXPERIENCE' || 
+            trimmedLine === 'SKILLS' ||
+            trimmedLine === 'PROJECTS')) {
           if (currentEntry.school || currentEntry.degree) {
             educationEntries.push(currentEntry);
           }
@@ -285,9 +342,14 @@ function parseCVFromPreview(previewText) {
         break;
         
       case 'experience':
-        // Check if this is a new entry
-        // A new entry starts with a title line (contains ' - ')
-        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
+        // Check if this is a new entry (title line contains ' - ')
+        if (trimmedLine && trimmedLine.includes(' - ')) {
+          // Save previous entry before creating a new one
+          if (currentEntry && (currentEntry.title || currentEntry.company || currentEntry.bullets.length > 0)) {
+            experienceEntries.push(currentEntry);
+            currentEntry = null;
+          }
+          
           currentEntry = {
             title: null,
             company: null,
@@ -300,13 +362,17 @@ function parseCVFromPreview(previewText) {
           
           // Parse title line
           const parts = trimmedLine.split(' - ').map(p => p.trim());
-          currentEntry.title = parts[0];
+          if (parts.length >= 1) {
+            currentEntry.title = parts[0];
+          }
           if (parts.length > 1) {
             const companyPart = parts[1];
             if (companyPart.includes(',')) {
               const companyParts = companyPart.split(',').map(p => p.trim());
               currentEntry.company = companyParts[0];
-              currentEntry.location = companyParts.slice(1).join(', ');
+              if (companyParts.length > 1) {
+                currentEntry.location = companyParts.slice(1).join(', ');
+              }
             } else {
               currentEntry.company = companyPart;
             }
@@ -322,9 +388,24 @@ function parseCVFromPreview(previewText) {
             if (parts.length === 2) {
               currentEntry.startDate = parts[0];
               currentEntry.endDate = parts[1];
-              if (parts[1].toLowerCase().includes('present')) {
+              if (parts[1].toLowerCase().includes('present') || 
+                  parts[1].toLowerCase().includes('current')) {
                 currentEntry.isCurrent = true;
               }
+            }
+            i++;
+            continue;
+          }
+          
+          // Date line without ' – '
+          if (!currentEntry.startDate && trimmedLine && 
+              (trimmedLine.match(/^\w+\s+\d{4}/) || 
+               trimmedLine.match(/^\d{4}/) || 
+               trimmedLine.toLowerCase().includes('present'))) {
+            if (trimmedLine.toLowerCase().includes('present')) {
+              currentEntry.startDate = trimmedLine;
+            } else {
+              currentEntry.startDate = trimmedLine;
             }
             i++;
             continue;
@@ -340,23 +421,25 @@ function parseCVFromPreview(previewText) {
             continue;
           }
           
-          // If we hit a line that doesn't match any pattern, it might be a company line without title
-          if (!currentEntry.company && trimmedLine && !trimmedLine.startsWith('•') && !trimmedLine.includes(' – ') && !trimmedLine.includes(' – ')) {
-            // Check if it's a date
-            if (!trimmedLine.match(/^\d{4}/)) {
-              currentEntry.company = trimmedLine;
-            }
-            i++;
-            continue;
-          }
-          
-          // Save entry when we hit an empty line or new section
-          if (trimmedLine === '' || trimmedLine === 'SKILLS' || trimmedLine === 'PROJECTS') {
+          // Unmatched line - save entry
+          if (currentEntry.bullets.length > 0 || currentEntry.title) {
             if (currentEntry.title || currentEntry.company) {
               experienceEntries.push(currentEntry);
+              currentEntry = null;
             }
-            currentEntry = null;
+            continue;
           }
+        }
+        
+        // Hit new section header
+        if (currentEntry && (trimmedLine === 'SKILLS' || 
+            trimmedLine === 'PROJECTS' ||
+            trimmedLine === 'ACTIVITIES' ||
+            trimmedLine === 'CERTIFICATIONS')) {
+          if (currentEntry.title || currentEntry.company) {
+            experienceEntries.push(currentEntry);
+          }
+          currentEntry = null;
         }
         
         i++;
@@ -377,8 +460,13 @@ function parseCVFromPreview(previewText) {
         break;
         
       case 'projects':
-        // Check if this is a new entry
-        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
+        // New entry (contains ' - ')
+        if (trimmedLine && trimmedLine.includes(' - ')) {
+          if (currentEntry && currentEntry.name) {
+            projectEntries.push(currentEntry);
+            currentEntry = null;
+          }
+          
           currentEntry = {
             name: null,
             role: null,
@@ -404,10 +492,11 @@ function parseCVFromPreview(previewText) {
             continue;
           }
           
-          // Description (any line that's not empty and not a header)
-          if (!currentEntry.description && trimmedLine && !trimmedLine.startsWith('Technologies:') && !trimmedLine.includes(' - ')) {
+          // Description line
+          if (!currentEntry.description && trimmedLine && 
+              !trimmedLine.startsWith('Technologies:') && 
+              !trimmedLine.includes(' - ')) {
             currentEntry.description = trimmedLine;
-            // Description is the last field, so save the entry
             if (currentEntry.name) {
               projectEntries.push(currentEntry);
               currentEntry = null;
@@ -415,10 +504,24 @@ function parseCVFromPreview(previewText) {
             i++;
             continue;
           }
+          
+          // Hit new section
+          if (currentEntry.description && 
+              (trimmedLine === 'ACTIVITIES' || 
+               trimmedLine === 'CERTIFICATIONS' ||
+               trimmedLine === 'References available on request')) {
+            if (currentEntry.name) {
+              projectEntries.push(currentEntry);
+              currentEntry = null;
+            }
+          }
         }
         
-        // If we have a name but no description and hit empty line or new section
-        if (currentEntry && currentEntry.name && (trimmedLine === '' || trimmedLine === 'ACTIVITIES' || trimmedLine === 'CERTIFICATIONS')) {
+        // Completed entry on empty line or new section
+        if (currentEntry && currentEntry.name && 
+            (trimmedLine === '' || 
+             trimmedLine === 'ACTIVITIES' || 
+             trimmedLine === 'CERTIFICATIONS')) {
           projectEntries.push(currentEntry);
           currentEntry = null;
         }
@@ -427,8 +530,13 @@ function parseCVFromPreview(previewText) {
         break;
         
       case 'activities':
-        // Check if this is a new entry
-        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
+        // New entry (contains ' - ')
+        if (trimmedLine && trimmedLine.includes(' - ')) {
+          if (currentEntry && currentEntry.title) {
+            activityEntries.push(currentEntry);
+            currentEntry = null;
+          }
+          
           currentEntry = {
             title: null,
             organization: null,
@@ -445,10 +553,12 @@ function parseCVFromPreview(previewText) {
         }
         
         if (currentEntry) {
-          // Description (any line that's not empty)
-          if (!currentEntry.description && trimmedLine && !trimmedLine.includes(' - ')) {
+          // Description line
+          if (!currentEntry.description && trimmedLine && 
+              !trimmedLine.includes(' - ') &&
+              trimmedLine !== 'CERTIFICATIONS' &&
+              trimmedLine !== 'References available on request') {
             currentEntry.description = trimmedLine;
-            // Save the entry
             if (currentEntry.title) {
               activityEntries.push(currentEntry);
               currentEntry = null;
@@ -456,10 +566,21 @@ function parseCVFromPreview(previewText) {
             i++;
             continue;
           }
+          
+          // Hit new section
+          if (currentEntry.title && 
+              (trimmedLine === 'CERTIFICATIONS' || 
+               trimmedLine === 'References available on request')) {
+            activityEntries.push(currentEntry);
+            currentEntry = null;
+          }
         }
         
-        // If we have a title but no description and hit empty line or new section
-        if (currentEntry && currentEntry.title && (trimmedLine === '' || trimmedLine === 'CERTIFICATIONS' || trimmedLine === 'References')) {
+        // Completed entry on empty line or new section
+        if (currentEntry && currentEntry.title && 
+            (trimmedLine === '' || 
+             trimmedLine === 'CERTIFICATIONS' || 
+             trimmedLine === 'References available on request')) {
           activityEntries.push(currentEntry);
           currentEntry = null;
         }
@@ -468,30 +589,28 @@ function parseCVFromPreview(previewText) {
         break;
         
       case 'certifications':
-        // Check if this is a new entry
-        if (!currentEntry && trimmedLine && trimmedLine.includes(' - ')) {
-          currentEntry = {
+        // Certifications entries are single lines: Name - Issuer (Year)
+        if (trimmedLine && trimmedLine.includes(' - ')) {
+          const entry = {
             name: null,
             issuer: null,
             year: null,
           };
           
           const parts = trimmedLine.split(' - ').map(p => p.trim());
-          currentEntry.name = parts[0];
+          entry.name = parts[0];
           if (parts.length > 1) {
             const issuerPart = parts[1];
             const yearMatch = issuerPart.match(/\((\d{4})\)/);
             if (yearMatch) {
-              currentEntry.year = yearMatch[1];
-              currentEntry.issuer = issuerPart.replace(/\(.*\)/, '').trim();
+              entry.year = yearMatch[1];
+              entry.issuer = issuerPart.replace(/\(.*\)/, '').trim();
             } else {
-              currentEntry.issuer = issuerPart;
+              entry.issuer = issuerPart;
             }
           }
-          // Save immediately (certifications are single line)
-          if (currentEntry.name) {
-            certificationEntries.push(currentEntry);
-            currentEntry = null;
+          if (entry.name) {
+            certificationEntries.push(entry);
           }
         }
         i++;
@@ -503,22 +622,11 @@ function parseCVFromPreview(previewText) {
     }
   }
   
-  // Save any remaining entries
-  if (currentEntry) {
-    if (currentSection === 'education' && (currentEntry.school || currentEntry.degree)) {
-      educationEntries.push(currentEntry);
-    } else if (currentSection === 'experience' && (currentEntry.title || currentEntry.company)) {
-      experienceEntries.push(currentEntry);
-    } else if (currentSection === 'projects' && currentEntry.name) {
-      projectEntries.push(currentEntry);
-    } else if (currentSection === 'activities' && currentEntry.title) {
-      activityEntries.push(currentEntry);
-    } else if (currentSection === 'certifications' && currentEntry.name) {
-      certificationEntries.push(currentEntry);
-    }
-  }
+  // Save any remaining entries (end of file reached)
+  saveCurrentEntry();
   
   // Assign parsed data to CV object
+  cv.summary = summaryText;
   cv.education = educationEntries;
   cv.experience = experienceEntries;
   cv.projects = projectEntries;

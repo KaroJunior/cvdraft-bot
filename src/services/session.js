@@ -4,7 +4,6 @@ const { COMPLETED } = require('../constants/steps');
  * Creates a default session state for the CV bot
  */
 function getDefaultSession() {
-  console.log('🔍 getDefaultSession() called');
   const session = {
     flow: {
       currentStep: null,
@@ -44,7 +43,6 @@ function getDefaultSession() {
       referencesOnRequest: false,
     }
   };
-  console.log(`🔍 Default session created - mode: ${session.flow.mode}, currentStep: ${session.flow.currentStep}`);
   return session;
 }
 
@@ -52,13 +50,8 @@ function getDefaultSession() {
  * Resets session to default state
  */
 function resetSession(ctx) {
-  console.log('🔍 resetSession() called');
-  console.log(`🔍 Before reset - mode: ${ctx.session?.flow?.mode}, currentStep: ${ctx.session?.flow?.currentStep}`);
-  
   const defaultSession = getDefaultSession();
   ctx.session = defaultSession;
-  
-  console.log(`🔍 After reset - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
   return ctx.session;
 }
 

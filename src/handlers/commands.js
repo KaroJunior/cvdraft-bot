@@ -10,10 +10,8 @@ const { parseCVFromPreview, validateRecoveryData } = require('../services/recove
  * Handle /start command
  */
 function handleStart(ctx) {
-  console.log('🔍 /start command - before resetSession');
   // Reset session
   resetSession(ctx);
-  console.log(`🔍 /start command - after reset - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
   
   const welcomeMessage = `
 Welcome to *${BOT_NAME}!* 📄
@@ -76,9 +74,7 @@ Thank you for using ${BOT_NAME}! 🎉
  * Handle /startover command
  */
 function handleStartOver(ctx) {
-  console.log('🔍 /startover command - before resetSession');
   resetSession(ctx);
-  console.log(`🔍 /startover command - after reset - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
   
   ctx.replyWithMarkdown(
     '🔄 *Session reset!* Let\'s start over.\n\n' +
@@ -93,16 +89,12 @@ function handleStartOver(ctx) {
  * Handle /cancel command
  */
 function handleCancel(ctx) {
-  console.log('🔍 /cancel command');
   const session = ctx.session;
   if (!session || !session.flow.currentStep) {
     return ctx.reply('There\'s no active process to cancel. Use /start to begin!');
   }
   
-  console.log(`🔍 /cancel - before reset - mode: ${session.flow.mode}, currentStep: ${session.flow.currentStep}`);
   resetSession(ctx);
-  console.log(`🔍 /cancel - after reset - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
-  
   ctx.replyWithMarkdown(
     '❌ *Cancelled!*\n\n' +
     'Your progress has been cleared. Use /start to begin again when you\'re ready.',
@@ -116,11 +108,9 @@ function handleCancel(ctx) {
  * Handle callback for "Create CV" button
  */
 function handleCreateCV(ctx) {
-  console.log('🔍 handleCreateCV called - before resetSession');
   // Reset session and start interview
   resetSession(ctx);
   ctx.session.flow.currentStep = PERSONAL_FULL_NAME;
-  console.log(`🔍 handleCreateCV - after reset - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
   
   ctx.replyWithMarkdown(
     '*Let\'s create your CV!* 📝\n\n' +
@@ -134,21 +124,16 @@ function handleCreateCV(ctx) {
  * Reconstructs CV from a pasted preview
  */
 async function handleRecover(ctx) {
-  console.log('🔍 RECOVER COMMAND RECEIVED');
-  console.log(`🔍 Current session before recovery - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
+  console.log('🔄 Recovery started');
   
   const session = ctx.session;
   
   // Reset any existing session
-  console.log('🔍 /recover - calling resetSession');
   resetSession(ctx);
   
   // Set a flag to indicate we're in recovery mode
-  console.log('🔍 /recover - setting recovery mode');
-  ctx.session.flow.mode = 'recovery';
-  ctx.session.flow.currentStep = 'RECOVERY_WAITING';
-  
-  console.log(`🔍 After setting recovery - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
+  session.flow.mode = 'recovery';
+  session.flow.currentStep = 'RECOVERY_WAITING';
   
   await ctx.replyWithMarkdown(
     '🔄 *CV Recovery*\n\n' +
@@ -168,6 +153,7 @@ async function generateAndSendPDF(ctx) {
   try {
     // Show generating message
     await ctx.replyWithMarkdown('📄 *Generating your CV PDF...*');
+    console.log('📄 PDF generation started');
     
     // Create PDF
     pdfPath = await createPDF(session.cv);
@@ -194,8 +180,10 @@ async function generateAndSendPDF(ctx) {
       'Thank you for using CVDraft!'
     );
     
+    console.log('✅ PDF generation completed successfully');
+    
   } catch (error) {
-    console.error('PDF generation error:', error);
+    console.error('❌ PDF generation error:', error);
     
     // Clean up if file exists
     if (pdfPath) {
@@ -214,29 +202,19 @@ async function generateAndSendPDF(ctx) {
  * Process recovery text from user
  */
 async function processRecoveryText(ctx, text) {
-  console.log('🔍 Recovery parser started');
-  console.log(`🔍 Text length: ${text.length} characters`);
-  console.log(`🔍 Text preview: ${text.substring(0, 100)}...`);
-  console.log(`🔍 Current session - mode: ${ctx.session.flow.mode}, currentStep: ${ctx.session.flow.currentStep}`);
-  
   const session = ctx.session;
   
   // Only process if we're in recovery mode
   if (session.flow.mode !== 'recovery' || session.flow.currentStep !== 'RECOVERY_WAITING') {
-    console.log(`🔍 Not in recovery mode - mode: ${session.flow.mode}, currentStep: ${session.flow.currentStep}`);
     return false;
   }
   
   try {
     // Parse the preview text into CV data
-    console.log('🔍 Attempting to parse CV from preview...');
     const cvData = parseCVFromPreview(text);
-    console.log('🔍 Parse successful');
     
     // Validate required sections
-    console.log('🔍 Validating recovered data...');
     if (!validateRecoveryData(cvData)) {
-      console.log('🔍 Validation failed - missing required sections');
       await ctx.replyWithMarkdown(
         '⚠️ *Invalid CV preview*\n\n' +
         'The preview you pasted is missing required sections. Please make sure it includes:\n' +
@@ -248,19 +226,14 @@ async function processRecoveryText(ctx, text) {
       );
       return true;
     }
-    console.log('🔍 Validation successful');
     
     // Store recovered CV data in session
-    console.log('🔍 Storing recovered CV data in session...');
     session.cv = cvData;
     session.flow.mode = 'normal';
     session.flow.currentStep = PREVIEW;
-    console.log('🔍 Session updated - mode: normal, currentStep: PREVIEW');
     
     // Generate preview to show user
-    console.log('🔍 Generating preview...');
     const preview = generateCVPreview(session);
-    console.log('🔍 Preview generated');
     
     await ctx.replyWithMarkdown(
       '✅ *CV recovered successfully!*\n\n' +
@@ -269,6 +242,8 @@ async function processRecoveryText(ctx, text) {
       preview +
       '\n```'
     );
+    
+    console.log('✅ Recovery completed successfully');
     
     // Show PDF generation options
     const keyboard = Markup.inlineKeyboard([
@@ -284,7 +259,7 @@ async function processRecoveryText(ctx, text) {
     return true;
     
   } catch (error) {
-    console.error('🔍 Recovery parsing error:', error);
+    console.error('❌ Recovery parsing error:', error);
     await ctx.replyWithMarkdown(
       '⚠️ *Could not parse your CV preview.*\n\n' +
       `Error: ${error.message}\n\n` +

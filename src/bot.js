@@ -35,7 +35,12 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // Session middleware with default session
 bot.use(session({
-  defaultSession: () => getDefaultSession()
+  defaultSession: () => {
+    console.log('🔍 session middleware - defaultSession() called');
+    const sess = getDefaultSession();
+    console.log(`🔍 session middleware - returning session with mode: ${sess.flow.mode}, currentStep: ${sess.flow.currentStep}`);
+    return sess;
+  }
 }));
 
 // Logging middleware

@@ -24,11 +24,13 @@ I'll help you create a professional, ATS-friendly Harvard-style CV quickly and e
 
 Ready to get started? Click the button below to begin building your professional CV.
 
-*${BOT_NAME}* — Your Personal CV Assistant 🤖
+*${BOT_NAME}* — Your Personal CV Assistant 
   `;
   
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('📝 Create CV', 'create_cv')]
+    [Markup.button.callback('📝 Create CV', 'create_cv')],
+    [Markup.button.url('More Tools', 'https://kezio.netlify.app')],
+    [Markup.button.url('Contact Developer', 'https://karojunior.netlify.app')]
   ]);
   
   return ctx.replyWithMarkdown(welcomeMessage, keyboard);
